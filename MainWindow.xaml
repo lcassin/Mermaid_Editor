@@ -1,0 +1,968 @@
+<Window x:Class="MermaidEditor.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:avalon="http://icsharpcode.net/sharpdevelop/avalonedit"
+        xmlns:local="clr-namespace:MermaidEditor"
+        mc:Ignorable="d"
+        Title="Mermaid Editor" Height="700" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True"
+        Drop="Window_Drop"
+        DragOver="Window_DragOver"
+        Background="#1E1E1E">
+    
+    <Window.Resources>
+        <!-- VS Dark Theme Colors -->
+        <SolidColorBrush x:Key="BackgroundBrush" Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="MenuBackgroundBrush" Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="ToolbarBackgroundBrush" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#3E3E42"/>
+        <SolidColorBrush x:Key="ForegroundBrush" Color="#F1F1F1"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#007ACC"/>
+        <SolidColorBrush x:Key="PurpleAccentBrush" Color="#9184EE"/>
+        <SolidColorBrush x:Key="HoverBrush" Color="#3E3E42"/>
+        <SolidColorBrush x:Key="SelectedBrush" Color="#094771"/>
+        <SolidColorBrush x:Key="DisabledForegroundBrush" Color="#656565"/>
+        
+        <!-- Menu Style -->
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="{StaticResource MenuBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+        
+        <!-- MenuItem Style for top-level menu items -->
+        <Style x:Key="TopLevelMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}" 
+                                BorderThickness="0"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <ContentPresenter ContentSource="Header" 
+                                                  RecognizesAccessKey="True"
+                                                  VerticalAlignment="Center"/>
+                                <Popup x:Name="PART_Popup"
+                                       IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                       Placement="Bottom"
+                                       AllowsTransparency="True"
+                                       Focusable="False"
+                                       PopupAnimation="Fade">
+                                    <Border Background="{StaticResource ToolbarBackgroundBrush}"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource DisabledForegroundBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- MenuItem Style for submenu items -->
+        <Style TargetType="MenuItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}" 
+                                BorderThickness="0"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="Icon"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="Shortcut"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="Icon" 
+                                                  Content="{TemplateBinding Icon}" 
+                                                  ContentSource="Icon"
+                                                  VerticalAlignment="Center"
+                                                  Width="16" Height="16"
+                                                  Margin="0,0,8,0"/>
+                                <ContentPresenter Grid.Column="1" 
+                                                  ContentSource="Header" 
+                                                  RecognizesAccessKey="True"
+                                                  VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" 
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Foreground="{StaticResource DisabledForegroundBrush}"
+                                           Margin="24,0,0,0"
+                                           VerticalAlignment="Center"/>
+                                <Path x:Name="SubMenuArrow" 
+                                      Grid.Column="3"
+                                      Data="M 0 0 L 4 4 L 0 8 Z"
+                                      Fill="{StaticResource ForegroundBrush}"
+                                      VerticalAlignment="Center"
+                                      Margin="8,0,0,0"
+                                      Visibility="Collapsed"/>
+                                <Popup x:Name="PART_Popup"
+                                       IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                       Placement="Right"
+                                       AllowsTransparency="True"
+                                       Focusable="False"
+                                       PopupAnimation="Fade">
+                                    <Border Background="{StaticResource ToolbarBackgroundBrush}"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource DisabledForegroundBrush}"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="SubMenuArrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="Icon" Value="{x:Null}">
+                                <Setter TargetName="Icon" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ContextMenu Style for dark dropdown -->
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        
+        <!-- Separator Style -->
+        <Style TargetType="Separator">
+            <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Margin" Value="4,2"/>
+        </Style>
+        
+        <!-- ToolBar Style -->
+        <Style TargetType="ToolBar">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,2"/>
+        </Style>
+        
+        <!-- ToolBar Overflow Button Style -->
+        <Style x:Key="{x:Static ToolBar.ToggleButtonStyleKey}" TargetType="ToggleButton">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" 
+                                Background="{StaticResource ToolbarBackgroundBrush}" 
+                                SnapsToDevicePixels="True"
+                                Padding="4,2">
+                            <Path x:Name="Arrow"
+                                  Fill="{StaticResource ForegroundBrush}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Data="M 0,0 L 4,4 L 8,0 Z"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource SelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Arrow" Property="Fill" Value="{StaticResource DisabledForegroundBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ToolBar Button Style -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" 
+                                Background="{TemplateBinding Background}" 
+                                BorderThickness="0"
+                                CornerRadius="2"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource SelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource DisabledForegroundBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- TabControl Style -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+        
+        <!-- TabItem Style -->
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="0,0,1,0"/>
+            <Setter Property="Panel.ZIndex" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Grid x:Name="tabGrid" Margin="0,0,0,1">
+                            <Border x:Name="border" 
+                                    Background="{TemplateBinding Background}"
+                                    BorderThickness="1,1,1,0"
+                                    BorderBrush="Transparent"
+                                    CornerRadius="6,6,0,0"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter x:Name="contentPresenter"
+                                                  ContentSource="Header"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="tabGrid" Property="Margin" Value="0,0,1,-1"/>
+                                <Setter TargetName="border" Property="Background" Value="#1E1E1E"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource PurpleAccentBrush}"/>
+                                <Setter Property="Panel.ZIndex" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ComboBox Style for Navigation Dropdown -->
+        <Style x:Key="NavigationComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource ToolbarBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="MinWidth" Value="200"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Focusable="False"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Border"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="3">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="20"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0" 
+                                                                  Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                  ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                  Margin="8,4"
+                                                                  VerticalAlignment="Center"
+                                                                  HorizontalAlignment="Left"/>
+                                                <Path Grid.Column="1"
+                                                      Data="M 0 0 L 4 4 L 8 0 Z"
+                                                      Fill="{StaticResource ForegroundBrush}"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <Popup x:Name="Popup"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Placement="Bottom"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Slide">
+                                <Border x:Name="DropDownBorder"
+                                        Background="{StaticResource ToolbarBackgroundBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ComboBoxItem Style -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="{StaticResource HoverBrush}"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource SelectedBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- StatusBar Style -->
+        <Style TargetType="StatusBar">
+            <Setter Property="Background" Value="{StaticResource MenuBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        
+        <!-- StatusBarItem Style -->
+        <Style TargetType="StatusBarItem">
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="Padding" Value="8,2"/>
+        </Style>
+        
+        <!-- GridSplitter Style -->
+        <Style TargetType="GridSplitter">
+            <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+        </Style>
+        
+        <!-- TextBox Style for path bar -->
+        <Style x:Key="PathTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="#3E3E42"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="CaretBrush" Value="{StaticResource ForegroundBrush}"/>
+        </Style>
+        
+        <!-- ListBox Style -->
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        
+        <!-- ListBoxItem Style -->
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource SelectedBrush}"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource HoverBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- ScrollBar Thumb Style -->
+        <Style x:Key="ScrollBarThumb" TargetType="Thumb">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="rectangle"
+                                Background="#686868"
+                                CornerRadius="4"
+                                Margin="2"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="rectangle" Property="Background" Value="#9E9E9E"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="rectangle" Property="Background" Value="#BDBDBD"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ScrollBar Style -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Width" Value="14"/>
+            <Setter Property="MinWidth" Value="14"/>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                    <Setter Property="Height" Value="14"/>
+                    <Setter Property="MinHeight" Value="14"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- Vertical ScrollBar Template -->
+        <ControlTemplate x:Key="VerticalScrollBar" TargetType="ScrollBar">
+            <Grid Background="{StaticResource BackgroundBrush}">
+                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource ScrollBarThumb}"/>
+                    </Track.Thumb>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+        
+        <!-- Horizontal ScrollBar Template -->
+        <ControlTemplate x:Key="HorizontalScrollBar" TargetType="ScrollBar">
+            <Grid Background="{StaticResource BackgroundBrush}">
+                <Track x:Name="PART_Track">
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource ScrollBarThumb}"/>
+                    </Track.Thumb>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+        
+        <!-- ScrollViewer Style -->
+        <Style TargetType="ScrollViewer">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollViewer">
+                        <Grid Background="{TemplateBinding Background}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ScrollContentPresenter Grid.Column="0" Grid.Row="0"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar"
+                                       Grid.Column="1" Grid.Row="0"
+                                       Orientation="Vertical"
+                                       Template="{StaticResource VerticalScrollBar}"
+                                       Value="{TemplateBinding VerticalOffset}"
+                                       Maximum="{TemplateBinding ScrollableHeight}"
+                                       ViewportSize="{TemplateBinding ViewportHeight}"
+                                       Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                            <ScrollBar x:Name="PART_HorizontalScrollBar"
+                                       Grid.Column="0" Grid.Row="1"
+                                       Orientation="Horizontal"
+                                       Template="{StaticResource HorizontalScrollBar}"
+                                       Value="{TemplateBinding HorizontalOffset}"
+                                       Maximum="{TemplateBinding ScrollableWidth}"
+                                       ViewportSize="{TemplateBinding ViewportWidth}"
+                                       Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    
+    <Window.InputBindings>
+        <KeyBinding Gesture="Ctrl+N" Command="{Binding NewCommand}" />
+        <KeyBinding Gesture="Ctrl+O" Command="{Binding OpenCommand}" />
+        <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+S" Command="{Binding SaveAsCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+P" Command="{Binding ExportPngCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+G" Command="{Binding ExportSvgCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+E" Command="{Binding ExportEmfCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+W" Command="{Binding ExportWordCommand}" />
+    </Window.InputBindings>
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Menu Bar -->
+        <Menu Grid.Row="0" Grid.IsSharedSizeScope="True">
+            <MenuItem Header="_File" Style="{StaticResource TopLevelMenuItemStyle}">
+                <MenuItem Header="_New" Click="New_Click" InputGestureText="Ctrl+N">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="_Open..." Click="Open_Click" InputGestureText="Ctrl+O">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="RecentFilesMenuItem" Header="_Recent Files">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                    <MenuItem Header="(No recent files)" IsEnabled="False"/>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="_Save" Click="Save_Click" InputGestureText="Ctrl+S">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Save _As..." Click="SaveAs_Click" InputGestureText="Ctrl+Shift+S">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE792;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem x:Name="ExportPngMenuItem" Header="E_xport as PNG..." Click="ExportPng_Click" InputGestureText="Ctrl+Shift+P">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="ExportSvgMenuItem" Header="Export as _SVG..." Click="ExportSvg_Click" InputGestureText="Ctrl+Shift+G">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="ExportEmfMenuItem" Header="Export as E_MF..." Click="ExportEmf_Click" InputGestureText="Ctrl+Shift+E">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem x:Name="ExportWordMenuItem" Header="Export as _Word..." Click="ExportWord_Click" InputGestureText="Ctrl+Shift+W">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="E_xit" Click="Exit_Click" InputGestureText="Alt+F4">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="_Edit" Style="{StaticResource TopLevelMenuItemStyle}">
+                <MenuItem Header="_Undo" Click="Undo_Click" InputGestureText="Ctrl+Z">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="_Redo" Click="Redo_Click" InputGestureText="Ctrl+Y">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="_View" Style="{StaticResource TopLevelMenuItemStyle}">
+                <MenuItem Header="Zoom _In" Click="ZoomIn_Click" InputGestureText="Ctrl++">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8A3;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Zoom _Out" Click="ZoomOut_Click" InputGestureText="Ctrl+-">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE71F;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="_Reset Zoom" Click="ResetZoom_Click" InputGestureText="Ctrl+0">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="_Fit to Window" Click="FitToWindow_Click" InputGestureText="Ctrl+F">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9A6;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="_Help" Style="{StaticResource TopLevelMenuItemStyle}">
+                <MenuItem Header="Mermaid _Syntax Reference" Click="SyntaxHelp_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="_About" Click="About_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+        </Menu>
+        
+        <!-- Toolbar -->
+        <Border Grid.Row="1" Background="{StaticResource MenuBackgroundBrush}" Padding="6">
+            <StackPanel Orientation="Horizontal">
+                <!-- Main Toolbar -->
+                <Border Background="{StaticResource ToolbarBackgroundBrush}" CornerRadius="4" HorizontalAlignment="Left">
+                    <ToolBarTray Background="Transparent">
+                        <ToolBar Band="1" BandIndex="1" Background="Transparent">
+                        <Button Click="New_Click" ToolTip="New (Ctrl+N)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="New" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="Open_Click" ToolTip="Open (Ctrl+O)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Open" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="Save_Click" ToolTip="Save (Ctrl+S)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Save" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Separator Background="{StaticResource BorderBrush}" Margin="4,4"/>
+                    <Button Click="Undo_Click" ToolTip="Undo (Ctrl+Z)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Undo" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="Redo_Click" ToolTip="Redo (Ctrl+Y)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Redo" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Separator Background="{StaticResource BorderBrush}" Margin="4,4"/>
+                    <Button Click="ZoomIn_Click" ToolTip="Zoom In (Ctrl++)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8A3;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Zoom In" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="ZoomOut_Click" ToolTip="Zoom Out (Ctrl+-)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE71F;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Zoom Out" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="ResetZoom_Click" ToolTip="Reset Zoom (Ctrl+0)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Reset" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="FitToWindow_Click" ToolTip="Fit to Window (Ctrl+F)" Style="{StaticResource ToolbarButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE9A6;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Fit" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Separator Background="{StaticResource BorderBrush}" Margin="4,4"/>
+                    <TextBlock Text="&#xE71E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{StaticResource ForegroundBrush}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                    <TextBlock x:Name="ZoomLevelText" Text="100%" Foreground="{StaticResource ForegroundBrush}" VerticalAlignment="Center" Width="50" Margin="4,0,0,0"/>
+                        </ToolBar>
+                    </ToolBarTray>
+                </Border>
+                
+                <!-- Export Toolbar -->
+                <Border Background="{StaticResource ToolbarBackgroundBrush}" CornerRadius="4" HorizontalAlignment="Left" Margin="6,0,0,0">
+                    <ToolBarTray Background="Transparent">
+                        <ToolBar Band="1" BandIndex="1" Background="Transparent">
+                            <Button x:Name="ExportPngToolbarButton" Click="ExportPng_Click" ToolTip="Export as PNG (Ctrl+Shift+P)" Style="{StaticResource ToolbarButtonStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PNG" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ExportSvgToolbarButton" Click="ExportSvg_Click" ToolTip="Export as SVG (Ctrl+Shift+G)" Style="{StaticResource ToolbarButtonStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="SVG" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ExportEmfToolbarButton" Click="ExportEmf_Click" ToolTip="Export as EMF (Ctrl+Shift+E)" Style="{StaticResource ToolbarButtonStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8BA;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="EMF" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ExportWordToolbarButton" Click="ExportWord_Click" ToolTip="Export to Word (Ctrl+Shift+W)" Style="{StaticResource ToolbarButtonStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Word" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </ToolBar>
+                    </ToolBarTray>
+                </Border>
+                
+            </StackPanel>
+        </Border>
+        
+        <!-- Main Content - Split View -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="200"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*" MinWidth="200"/>
+            </Grid.ColumnDefinitions>
+            
+            <!-- Left Panel - Tabbed Code Editor / File Browser -->
+            <TabControl x:Name="LeftPanelTabs" Grid.Column="0" Background="#2D2D30">
+                <TabControl.Template>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <!-- Tab Header Panel with purple line underneath non-selected tabs -->
+                            <Grid Grid.Row="0">
+                                <Border Background="#2D2D30" BorderBrush="{StaticResource PurpleAccentBrush}" 
+                                        BorderThickness="0,0,0,1" Margin="0,0,0,0"/>
+                                <TabPanel IsItemsHost="True" Background="Transparent" Margin="0,0,0,0"/>
+                            </Grid>
+                            <!-- Content area with purple border on right only -->
+                            <Border Grid.Row="1" 
+                                    BorderBrush="{StaticResource PurpleAccentBrush}" 
+                                    BorderThickness="0,0,1,0"
+                                    Background="#1E1E1E">
+                                <ContentPresenter ContentSource="SelectedContent"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </TabControl.Template>
+                <!-- Code Tab -->
+                <TabItem x:Name="CodeTab">
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal" Margin="4,2">
+                            <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="EditorHeaderText" Text="Code" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        
+                        <!-- Navigation Dropdown Bar -->
+                        <ComboBox x:Name="NavigationDropdown" 
+                                  Grid.Row="0"
+                                  Style="{StaticResource NavigationComboBoxStyle}"
+                                  BorderThickness="0,0,0,1"
+                                  Margin="0,0,0,4"
+                                  SelectionChanged="NavigationDropdown_SelectionChanged"
+                                  ToolTip="Jump to section">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DisplayText}" Foreground="#F1F1F1" Margin="{Binding IndentMargin}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Background" Value="#2D2D30"/>
+                                    <Setter Property="Foreground" Value="#F1F1F1"/>
+                                    <Setter Property="Padding" Value="8,4"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ComboBoxItem">
+                                                <Border x:Name="Bd" 
+                                                        Background="{TemplateBinding Background}" 
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsHighlighted" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#3E3E42"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#094771"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
+                        
+                        <!-- Code Editor -->
+                        <avalon:TextEditor x:Name="CodeEditor" 
+                                 Grid.Row="1"
+                                 FontFamily="Consolas"
+                                 FontSize="14"
+                                 Background="#1E1E1E"
+                                 Foreground="#D4D4D4"
+                                 ShowLineNumbers="True"
+                                 WordWrap="False"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Auto"/>
+                    </Grid>
+                </TabItem>
+                
+                <!-- Files Tab -->
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal" Margin="4,2">
+                            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Files" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Grid Background="#1E1E1E">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        
+                        <!-- Path Bar -->
+                        <Grid Grid.Row="0" Background="#2D2D30">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="BrowseFolderButton" Grid.Column="0" 
+                                    Click="BrowseFolder_Click" ToolTip="Browse for folder"
+                                    Style="{StaticResource ToolbarButtonStyle}" Margin="2">
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                            </Button>
+                            <Button x:Name="ParentFolderButton" Grid.Column="1" 
+                                    Click="ParentFolder_Click" ToolTip="Go to parent folder"
+                                    Style="{StaticResource ToolbarButtonStyle}" Margin="2">
+                                <TextBlock Text="&#xE74A;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                            </Button>
+                            <TextBox x:Name="CurrentPathTextBox" Grid.Column="2" 
+                                     Background="#3E3E42" Foreground="#D4D4D4" 
+                                     BorderThickness="0" Padding="4" Margin="2"
+                                     IsReadOnly="True"/>
+                        </Grid>
+                        
+                        <!-- File List -->
+                        <ListBox x:Name="FileListBox" Grid.Row="1" 
+                                 Background="#1E1E1E" Foreground="#D4D4D4"
+                                 BorderThickness="0"
+                                 SelectionChanged="FileListBox_SelectionChanged"
+                                 MouseDoubleClick="FileListBox_MouseDoubleClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="4,2">
+                                        <TextBlock Text="{Binding Icon}" Width="20" FontFamily="Segoe UI Symbol"/>
+                                        <TextBlock Text="{Binding Name}" Margin="4,0,0,0"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+            
+            <!-- Splitter with grip indicator -->
+            <GridSplitter Grid.Column="1" 
+                          Width="8" 
+                          HorizontalAlignment="Stretch"
+                          Background="#3E3E42"
+                          Cursor="SizeWE">
+                <GridSplitter.Template>
+                    <ControlTemplate TargetType="GridSplitter">
+                        <Border Background="#3E3E42">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <Ellipse Width="4" Height="4" Fill="#808080" Margin="0,2"/>
+                                <Ellipse Width="4" Height="4" Fill="#808080" Margin="0,2"/>
+                                <Ellipse Width="4" Height="4" Fill="#808080" Margin="0,2"/>
+                            </StackPanel>
+                        </Border>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
+            
+            <!-- Right Panel - Preview -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                
+                <Border Grid.Row="0" Background="#2D2D30" Padding="8,4">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8FF;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="White" VerticalAlignment="Center"/>
+                        <TextBlock Text="Preview" Foreground="White" FontWeight="SemiBold" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+                
+                <wv2:WebView2 x:Name="PreviewWebView" 
+                              Grid.Row="1"/>
+            </Grid>
+        </Grid>
+        
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="3">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="Ready"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="FilePathText" Text="Untitled"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
