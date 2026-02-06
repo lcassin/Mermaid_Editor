@@ -69,6 +69,9 @@ public partial class MainWindow : Window
     private static readonly string RecentFilesPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "MermaidEditor", "recent.json");
+    private bool _isRenderingContent; // Flag set when we call NavigateToString, cleared after navigation completes
+    private bool _isGoingBack; // Flag set when user clicks back button, cleared after navigation completes
+    private bool _hasNavigatedAway; // Track if user has navigated away from rendered content
 
     private const string DefaultMermaidCode= @"flowchart TD
     A[Start] --> B{Is it working?}
@@ -579,14 +582,33 @@ Console.WriteLine(""Hello, World!"");
     
     private void CoreWebView2_NavigationCompleted(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
     {
-        // Update back button enabled state based on whether we can go back
-        PreviewBackButton.IsEnabled = PreviewWebView.CoreWebView2.CanGoBack;
+        if (_isRenderingContent)
+        {
+            // This navigation is from our NavigateToString call - this is the base render
+            _isRenderingContent = false;
+            _hasNavigatedAway = false;
+            PreviewBackButton.IsEnabled = false;
+        }
+        else if (_isGoingBack)
+        {
+            // This navigation is from clicking the back button - stay disabled
+            _isGoingBack = false;
+            _hasNavigatedAway = false;
+            PreviewBackButton.IsEnabled = false;
+        }
+        else
+        {
+            // User has navigated away from rendered content (clicked a link)
+            _hasNavigatedAway = true;
+            PreviewBackButton.IsEnabled = true;
+        }
     }
     
     private void PreviewBack_Click(object sender, RoutedEventArgs e)
     {
-        if (PreviewWebView.CoreWebView2?.CanGoBack == true)
+        if (_hasNavigatedAway && PreviewWebView.CoreWebView2?.CanGoBack == true)
         {
+            _isGoingBack = true;
             PreviewWebView.CoreWebView2.GoBack();
         }
     }
@@ -1069,6 +1091,7 @@ Console.WriteLine(""Hello, World!"");
 </body>
 </html>";
 
+        _isRenderingContent = true;
         PreviewWebView.NavigateToString(html);
         PreviewWebView.WebMessageReceived -= PreviewWebView_WebMessageReceived;
         PreviewWebView.WebMessageReceived += PreviewWebView_WebMessageReceived;
@@ -1316,6 +1339,7 @@ Console.WriteLine(""Hello, World!"");
 </body>
 </html>";
 
+        _isRenderingContent = true;
         PreviewWebView.NavigateToString(html);
         PreviewWebView.WebMessageReceived -= PreviewWebView_WebMessageReceived;
         PreviewWebView.WebMessageReceived += PreviewWebView_WebMessageReceived;
@@ -2999,6 +3023,7 @@ Console.WriteLine(""Hello, World!"");
     </script>
 </body>
 </html>";
+        _isRenderingContent = true;
         PreviewWebView.NavigateToString(html);
     }
 
@@ -3034,6 +3059,7 @@ Console.WriteLine(""Hello, World!"");
     </script>
 </body>
 </html>";
+        _isRenderingContent = true;
         PreviewWebView.NavigateToString(html);
     }
 
