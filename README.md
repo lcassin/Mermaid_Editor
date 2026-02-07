@@ -1,4 +1,4 @@
-.
+# Mermaid Editor
 
 A visual IDE for editing Mermaid diagrams and Markdown files, built with WPF and .NET.
 
