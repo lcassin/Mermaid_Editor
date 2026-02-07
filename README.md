@@ -1,6 +1,10 @@
-# Mermaid Editor
+.
 
 A visual IDE for editing Mermaid diagrams and Markdown files, built with WPF and .NET.
+
+## Download
+
+**Download [Mermaid Editor v1.7.1](Installer/MermaidEditorSetup-1.7.1.exe?raw=true) (Lastest Stable Version)** - Windows .exe installer (self-contained, no .NET runtime required)
 
 ## Features
 
