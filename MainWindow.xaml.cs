@@ -77,6 +77,11 @@ public partial class MainWindow : Window
     private bool _isRenderingContent; // Flag set when we call NavigateToString, cleared after navigation completes
     private bool _isGoingBack; // Flag set when user clicks back button, cleared after navigation completes
     private bool _hasNavigatedAway; // Track if user has navigated away from rendered content
+    
+    // File change detection
+    private FileSystemWatcher? _fileWatcher;
+    private bool _isReloadingFile; // Prevent recursive change notifications during reload
+    private bool _isSavingFile; // Prevent change notification when we save the file ourselves
 
     private const string DefaultMermaidCode= @"flowchart TD
     A[Start] --> B{Is it working?}
@@ -540,6 +545,13 @@ Console.WriteLine(""Hello, World!"");
     {
         try
         {
+                // Load and apply saved theme
+                ThemeManager.LoadTheme();
+                UpdateThemeMenuCheckmarks();
+                UpdateEditorTheme();
+                UpdateTitleBarTheme();
+                UpdateTabStyles(); // Refresh tab styles after theme is loaded
+            
             await PreviewWebView.EnsureCoreWebView2Async();
             _webViewInitialized = true;
             
@@ -748,6 +760,10 @@ Console.WriteLine(""Hello, World!"");
                     break;
             }
         }
+        
+        // Clean up file watcher
+        _fileWatcher?.Dispose();
+        _fileWatcher = null;
     }
 
     private void CodeEditor_TextChanged(object? sender, EventArgs e)
@@ -1285,10 +1301,14 @@ Console.WriteLine(""Hello, World!"");
                 }});
             }});
             
-            // Add click handlers to list items
+            // Add click handlers to list items - handle clicks anywhere in the list item
             content.querySelectorAll('li').forEach(el => {{
                 el.style.cursor = 'pointer';
                 el.addEventListener('click', function(e) {{
+                    // Don't navigate if clicking on a link
+                    if (e.target.tagName === 'A' || e.target.closest('a')) {{
+                        return;
+                    }}
                     e.stopPropagation();
                     const text = el.textContent.trim();
                     if (text) {{
@@ -1318,54 +1338,83 @@ Console.WriteLine(""Hello, World!"");
             }});
             
             // Add click handlers to bold text (strong)
+            // If inside a list item, use the list item's text for better context
             content.querySelectorAll('strong').forEach(el => {{
                 el.style.cursor = 'pointer';
                 el.addEventListener('click', function(e) {{
                     e.stopPropagation();
-                    const text = el.textContent.trim();
-                    if (text) {{
-                        window.chrome.webview.postMessage({{ 
-                            type: 'elementClick', 
-                            text: text,
-                            elementType: 'bold'
-                        }});
+                    const listItem = el.closest('li');
+                    if (listItem) {{
+                        // Use list item text for better matching
+                        const text = listItem.textContent.trim();
+                        if (text) {{
+                            window.chrome.webview.postMessage({{ 
+                                type: 'elementClick', 
+                                text: text,
+                                elementType: 'listitem'
+                            }});
+                        }}
+                    }} else {{
+                        const text = el.textContent.trim();
+                        if (text) {{
+                            window.chrome.webview.postMessage({{ 
+                                type: 'elementClick', 
+                                text: text,
+                                elementType: 'bold'
+                            }});
+                        }}
                     }}
                 }});
             }});
             
             // Add click handlers to italic text (em)
+            // If inside a list item, use the list item's text for better context
             content.querySelectorAll('em').forEach(el => {{
                 el.style.cursor = 'pointer';
                 el.addEventListener('click', function(e) {{
                     e.stopPropagation();
-                    const text = el.textContent.trim();
-                    if (text) {{
-                        window.chrome.webview.postMessage({{ 
-                            type: 'elementClick', 
-                            text: text,
-                            elementType: 'italic'
-                        }});
+                    const listItem = el.closest('li');
+                    if (listItem) {{
+                        // Use list item text for better matching
+                        const text = listItem.textContent.trim();
+                        if (text) {{
+                            window.chrome.webview.postMessage({{ 
+                                type: 'elementClick', 
+                                text: text,
+                                elementType: 'listitem'
+                            }});
+                        }}
+                    }} else {{
+                        const text = el.textContent.trim();
+                        if (text) {{
+                            window.chrome.webview.postMessage({{ 
+                                type: 'elementClick', 
+                                text: text,
+                                elementType: 'italic'
+                            }});
+                        }}
                     }}
                 }});
             }});
             
-            // Add click handlers to paragraphs (but not if they contain other clickable elements)
+            // Add click handlers to paragraphs - handle clicks anywhere in the paragraph
             content.querySelectorAll('p').forEach(el => {{
-                if (!el.querySelector('code')) {{
-                    el.style.cursor = 'pointer';
-                    el.addEventListener('click', function(e) {{
-                        if (e.target === el) {{
-                            const text = el.textContent.trim().substring(0, 50); // First 50 chars
-                            if (text) {{
-                                window.chrome.webview.postMessage({{ 
-                                    type: 'elementClick', 
-                                    text: text,
-                                    elementType: 'paragraph'
-                                }});
-                            }}
-                        }}
-                    }});
-                }}
+                el.style.cursor = 'pointer';
+                el.addEventListener('click', function(e) {{
+                    // Don't navigate if clicking on a link (let the link work normally)
+                    if (e.target.tagName === 'A' || e.target.closest('a')) {{
+                        return;
+                    }}
+                    e.stopPropagation();
+                    const text = el.textContent.trim().substring(0, 50); // First 50 chars
+                    if (text) {{
+                        window.chrome.webview.postMessage({{ 
+                            type: 'elementClick', 
+                            text: text,
+                            elementType: 'paragraph'
+                        }});
+                    }}
+                }});
             }});
         }}
     </script>
@@ -1571,6 +1620,32 @@ Console.WriteLine(""Hello, World!"");
                         var idx = line.IndexOf(normalizedText, StringComparison.OrdinalIgnoreCase);
                         if (idx >= 0) { bestMatchStart = idx; bestMatchLength = normalizedText.Length; }
                         break;
+                    }
+                    else if (elementType == "listitem")
+                    {
+                        // For list items, look for lines starting with - or * and containing the text
+                        var trimmedLine = line.TrimStart();
+                        if ((trimmedLine.StartsWith("- ") || trimmedLine.StartsWith("* ") || trimmedLine.StartsWith("+ ")) &&
+                            LineContainsListItemText(line, normalizedText))
+                        {
+                            bestLineIndex = i;
+                            bestMatchStart = 0;
+                            bestMatchLength = line.Length;
+                            break;
+                        }
+                    }
+                    else if (elementType == "paragraph")
+                    {
+                        // For paragraphs, search for any part of the text (handles Markdown syntax differences)
+                        // Try to find a line that contains a significant portion of the text
+                        var searchText = normalizedText.Length > 20 ? normalizedText.Substring(0, 20) : normalizedText;
+                        if (line.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                        {
+                            bestLineIndex = i;
+                            var idx = line.IndexOf(searchText, StringComparison.OrdinalIgnoreCase);
+                            if (idx >= 0) { bestMatchStart = idx; bestMatchLength = searchText.Length; }
+                            break;
+                        }
                     }
                     else if (string.IsNullOrEmpty(elementType) || elementType == "text")
                     {
@@ -1808,6 +1883,32 @@ Console.WriteLine(""Hello, World!"");
         {
             StatusText.Text = "Element not found in source";
         }
+    }
+
+    /// <summary>
+    /// Helper method to check if a Markdown list item line contains the rendered text.
+    /// Handles Markdown syntax like **bold**, *italic*, [links](url), etc.
+    /// </summary>
+    private bool LineContainsListItemText(string line, string renderedText)
+    {
+        // The rendered text is what appears in the browser (without Markdown syntax)
+        // We need to check if the line contains the key words from the rendered text
+        
+        // Split the rendered text into words and check if the line contains them
+        var words = renderedText.Split(new[] { ' ', '-', ':', ',', '.' }, StringSplitOptions.RemoveEmptyEntries);
+        
+        // Check if the line contains at least the first few significant words
+        int matchCount = 0;
+        foreach (var word in words.Take(5))
+        {
+            if (word.Length > 2 && line.Contains(word, StringComparison.OrdinalIgnoreCase))
+            {
+                matchCount++;
+            }
+        }
+        
+        // If we match at least 2 words (or all words if less than 2), consider it a match
+        return matchCount >= Math.Min(2, words.Length);
     }
 
     private void UpdateTitle()
@@ -2912,32 +3013,235 @@ Console.WriteLine(""Hello, World!"");
 
     private void About_Click(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show(
-            "Mermaid Editor v1.7.2\n\n" +
-            "A visual IDE for editing Mermaid diagrams and Markdown files.\n\n" +
-            "Features:\n" +
-            "- Live preview as you type\n" +
-            "- Mermaid diagram rendering with pan/zoom\n" +
-            "- Markdown rendering with GitHub styling\n" +
-            "- Syntax highlighting and IntelliSense\n" +
-            "- Click-to-navigate between preview and code\n" +
-            "- Navigation dropdown for quick section jumping\n" +
-            "- Export to PNG, SVG, EMF, and Word\n" +
-            "- Word export embeds images for Markdown files\n" +
-            "- New document templates for all diagram types\n" +
-            "- File browser with preview on selection\n" +
-            "- Drag and drop file support\n" +
-            "- Undo/Redo support\n\n" +
-            "Supported file types:\n" +
-            "- .mmd, .mermaid - Mermaid diagrams\n" +
-            "- .md - Markdown files\n\n" +
-            "\u00A9 2026 Lee Cassin\n\n" +
-            "Licensed under the GNU General Public License v3.0\n" +
-            "This is free software; you are free to change and redistribute it.\n" +
-            "See LICENSE file for details.",
-            "About Mermaid Editor",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        // Create custom About dialog with Mermaid icon
+        var aboutWindow = new Window
+        {
+            Title = "About Mermaid Editor",
+            Width = 500,
+            Height = 480,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize,
+            Background = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeBackgroundBrush"]
+        };
+        
+        var mainGrid = new Grid { Margin = new Thickness(20) };
+        mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        
+        // Header with icon and title
+        var headerPanel = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+        
+        // Load the app icon
+        var iconImage = new System.Windows.Controls.Image
+        {
+            Width = 64,
+            Height = 64,
+            Margin = new Thickness(0, 0, 16, 0)
+        };
+        try
+        {
+            var iconUri = new Uri("pack://application:,,,/app.ico", UriKind.Absolute);
+            iconImage.Source = new System.Windows.Media.Imaging.BitmapImage(iconUri);
+        }
+        catch
+        {
+            // If icon fails to load, continue without it
+        }
+        
+        var titlePanel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        titlePanel.Children.Add(new TextBlock
+        {
+            Text = "Mermaid Editor",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeForegroundBrush"]
+        });
+        titlePanel.Children.Add(new TextBlock
+        {
+            Text = "Version 2.0.0",
+            FontSize = 14,
+            Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeDisabledForegroundBrush"],
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+        
+        headerPanel.Children.Add(iconImage);
+        headerPanel.Children.Add(titlePanel);
+        Grid.SetRow(headerPanel, 0);
+        
+        // Content with description
+        var contentScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var contentText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeForegroundBrush"],
+            Text = "A visual IDE for editing Mermaid diagrams and Markdown files.\n\n" +
+                   "Features:\n" +
+                   "- Live preview as you type\n" +
+                   "- Mermaid diagram rendering with pan/zoom\n" +
+                   "- Markdown rendering with GitHub styling\n" +
+                   "- Syntax highlighting and IntelliSense\n" +
+                   "- Click-to-navigate between preview and code\n" +
+                   "- Navigation dropdown for quick section jumping\n" +
+                   "- Export to PNG, SVG, EMF, and Word\n" +
+                   "- Word export embeds images for Markdown files\n" +
+                   "- New document templates for all diagram types\n" +
+                   "- File browser with preview on selection\n" +
+                   "- Drag and drop file support\n" +
+                   "- Undo/Redo support\n\n" +
+                   "Supported file types:\n" +
+                   "- .mmd, .mermaid - Mermaid diagrams\n" +
+                   "- .md - Markdown files\n\n" +
+                   "\u00A9 2026 Lee Cassin\n\n" +
+                   "Licensed under the GNU General Public License v3.0\n" +
+                   "This is free software; you are free to change and redistribute it.\n" +
+                   "See LICENSE file for details."
+        };
+        contentScroll.Content = contentText;
+        Grid.SetRow(contentScroll, 1);
+        
+        // OK button
+        var okButton = new System.Windows.Controls.Button
+        {
+            Content = "OK",
+            Width = 80,
+            Padding = new Thickness(8, 6, 8, 6),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            Margin = new Thickness(0, 16, 0, 0),
+            Background = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeToolbarBackgroundBrush"],
+            Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeForegroundBrush"],
+            BorderBrush = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeBorderBrush"]
+        };
+        okButton.Click += (s, args) => aboutWindow.Close();
+        Grid.SetRow(okButton, 2);
+        
+        mainGrid.Children.Add(headerPanel);
+        mainGrid.Children.Add(contentScroll);
+        mainGrid.Children.Add(okButton);
+        
+        aboutWindow.Content = mainGrid;
+        aboutWindow.ShowDialog();
+    }
+
+    private void ThemeDark_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyTheme(AppTheme.Dark);
+    }
+
+    private void ThemeLight_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyTheme(AppTheme.Light);
+    }
+
+    private void ThemeTwilight_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyTheme(AppTheme.Twilight);
+    }
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        ThemeManager.ApplyTheme(theme);
+        UpdateThemeMenuCheckmarks();
+        UpdateEditorTheme();
+        UpdateTitleBarTheme();
+        UpdateTabStyles(); // Update tab colors for new theme
+        RenderPreview(); // Re-render preview with new theme
+    }
+
+    private void UpdateThemeMenuCheckmarks()
+    {
+        ThemeDarkMenuItem.IsChecked = ThemeManager.CurrentTheme == AppTheme.Dark;
+        ThemeLightMenuItem.IsChecked = ThemeManager.CurrentTheme == AppTheme.Light;
+        ThemeTwilightMenuItem.IsChecked = ThemeManager.CurrentTheme == AppTheme.Twilight;
+    }
+
+    private void UpdateEditorTheme()
+    {
+        var colors = ThemeManager.GetThemeColors(ThemeManager.CurrentTheme);
+        
+        // Update AvalonEdit colors
+        CodeEditor.Background = new SolidColorBrush(colors.EditorBackground);
+        CodeEditor.Foreground = new SolidColorBrush(colors.EditorForeground);
+        CodeEditor.LineNumbersForeground = new SolidColorBrush(colors.LineNumber);
+        
+        // Update syntax highlighting based on theme
+        RegisterThemeSyntaxHighlighting();
+    }
+
+    private void RegisterThemeSyntaxHighlighting()
+    {
+        var isDark = ThemeManager.IsDarkTheme;
+        
+        // Color values based on theme
+        var commentColor = isDark ? "#6A9955" : "#008000";
+        var keywordColor = isDark ? "#569CD6" : "#0000FF";
+        var diagramTypeColor = isDark ? "#C586C0" : "#AF00DB";
+        
+        var xshd = "<?xml version=\"1.0\"?>" +
+            "<SyntaxDefinition name=\"Mermaid\" xmlns=\"http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008\">" +
+            "<Color name=\"Comment\" foreground=\"" + commentColor + "\" />" +
+            "<Color name=\"Keyword\" foreground=\"" + keywordColor + "\" fontWeight=\"bold\" />" +
+            "<Color name=\"DiagramType\" foreground=\"" + diagramTypeColor + "\" fontWeight=\"bold\" />" +
+            "<RuleSet>" +
+            "<Span color=\"Comment\" begin=\"%%\" />" +
+            "<Keywords color=\"DiagramType\">" +
+            "<Word>flowchart</Word><Word>graph</Word><Word>sequenceDiagram</Word>" +
+            "<Word>classDiagram</Word><Word>stateDiagram</Word><Word>erDiagram</Word>" +
+            "<Word>journey</Word><Word>gantt</Word><Word>pie</Word><Word>mindmap</Word>" +
+            "<Word>timeline</Word><Word>gitGraph</Word><Word>quadrantChart</Word>" +
+            "</Keywords>" +
+            "<Keywords color=\"Keyword\">" +
+            "<Word>subgraph</Word><Word>end</Word><Word>direction</Word>" +
+            "<Word>participant</Word><Word>actor</Word><Word>activate</Word><Word>deactivate</Word>" +
+            "<Word>Note</Word><Word>note</Word><Word>loop</Word><Word>alt</Word><Word>else</Word>" +
+            "<Word>opt</Word><Word>par</Word><Word>critical</Word><Word>break</Word><Word>rect</Word>" +
+            "<Word>class</Word><Word>state</Word><Word>section</Word><Word>title</Word>" +
+            "<Word>TB</Word><Word>TD</Word><Word>BT</Word><Word>RL</Word><Word>LR</Word>" +
+            "</Keywords>" +
+            "</RuleSet>" +
+            "</SyntaxDefinition>";
+
+        try
+        {
+            using var reader = new XmlTextReader(new StringReader(xshd));
+            var definition = HighlightingLoader.Load(reader, HighlightingManager.Instance);
+            HighlightingManager.Instance.RegisterHighlighting("Mermaid", new[] { ".mmd", ".mermaid" }, definition);
+            CodeEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("Mermaid");
+        }
+        catch
+        {
+            // If syntax highlighting fails, continue without it
+        }
+    }
+
+    private void UpdateTitleBarTheme()
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                var isDark = ThemeManager.IsDarkTheme;
+                int darkModeValue = isDark ? 1 : 0;
+                DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkModeValue, sizeof(int));
+                
+                // Set caption color based on theme
+                var colors = ThemeManager.GetThemeColors(ThemeManager.CurrentTheme);
+                int captionColor = ColorToInt(colors.Background);
+                DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref captionColor, sizeof(int));
+            }
+        }
+        catch
+        {
+            // Silently fail if DWM API is not available
+        }
+    }
+
+    private static int ColorToInt(System.Windows.Media.Color color)
+    {
+        // Color format is 0x00BBGGRR (BGR, not RGB)
+        return (color.B << 16) | (color.G << 8) | color.R;
     }
 
     private void RenderMermaidPreview(string code)
@@ -3135,10 +3439,19 @@ Console.WriteLine(""Hello, World!"");
             ? ExtractMarkdownHeadings() 
             : ExtractMermaidSections();
         
-        NavigationDropdown.ItemsSource = items;
-        if (items.Count > 0)
+        // Use _isNavigating flag to prevent selection change from triggering navigation
+        _isNavigating = true;
+        try
         {
-            NavigationDropdown.SelectedIndex = 0;
+            NavigationDropdown.ItemsSource = items;
+            if (items.Count > 0)
+            {
+                NavigationDropdown.SelectedIndex = 0;
+            }
+        }
+        finally
+        {
+            _isNavigating = false;
         }
     }
 
@@ -3848,32 +4161,8 @@ Console.WriteLine(""Hello, World!"");
             }
         };
         
-        // Add context menu for tab operations with dark theme styling
-        var menuBackground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2D2D30"));
-        var menuBorder = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#3E3E42"));
-        var menuForeground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F1F1F1"));
-        
-        var contextMenu = new System.Windows.Controls.ContextMenu
-        {
-            Background = menuBackground,
-            BorderBrush = menuBorder,
-            Foreground = menuForeground,
-        };
-        
-        // Create a style for menu items with dark theme
-        var menuItemStyle = new System.Windows.Style(typeof(System.Windows.Controls.MenuItem));
-        menuItemStyle.Setters.Add(new Setter(System.Windows.Controls.MenuItem.BackgroundProperty, menuBackground));
-        menuItemStyle.Setters.Add(new Setter(System.Windows.Controls.MenuItem.ForegroundProperty, menuForeground));
-        menuItemStyle.Setters.Add(new Setter(System.Windows.Controls.MenuItem.BorderBrushProperty, menuBorder));
-        menuItemStyle.Setters.Add(new Setter(System.Windows.Controls.MenuItem.PaddingProperty, new Thickness(8, 4, 8, 4)));
-        
-        // Add trigger for hover state
-        var hoverTrigger = new Trigger { Property = System.Windows.Controls.MenuItem.IsHighlightedProperty, Value = true };
-        hoverTrigger.Setters.Add(new Setter(System.Windows.Controls.MenuItem.BackgroundProperty, 
-            new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#3E3E42"))));
-        menuItemStyle.Triggers.Add(hoverTrigger);
-        
-        contextMenu.Resources.Add(typeof(System.Windows.Controls.MenuItem), menuItemStyle);
+        // Add context menu for tab operations - uses XAML styles from Window.Resources
+        var contextMenu = new System.Windows.Controls.ContextMenu();
         
         // Get the filename for the Close menu item
         var fileName = string.IsNullOrEmpty(doc.FilePath) ? "Untitled" : System.IO.Path.GetFileName(doc.FilePath);
@@ -3886,32 +4175,8 @@ Console.WriteLine(""Hello, World!"");
         var closeAllButThisItem = new System.Windows.Controls.MenuItem { Header = "Close All But This", Tag = doc };
         closeAllButThisItem.Click += (s, e) => CloseAllDocumentsExcept(doc);
         
-        // Create a custom separator using a disabled MenuItem with a Border as content
-        // This avoids the white icon gutter that WPF's default Separator has
-        var separatorItem = new System.Windows.Controls.MenuItem
-        {
-            IsEnabled = false,
-            IsHitTestVisible = false,
-            Focusable = false,
-            Height = 9,
-            Padding = new Thickness(0),
-            Margin = new Thickness(0),
-        };
-        // Create a custom template for the separator MenuItem
-        var sepTemplate = new ControlTemplate(typeof(System.Windows.Controls.MenuItem));
-        var sepBorder = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-        sepBorder.SetValue(System.Windows.Controls.Border.BackgroundProperty, menuBackground);
-        sepBorder.SetValue(System.Windows.Controls.Border.HeightProperty, 9.0);
-        var sepLine = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-        sepLine.SetValue(System.Windows.Controls.Border.BackgroundProperty, menuBorder);
-        sepLine.SetValue(System.Windows.Controls.Border.HeightProperty, 1.0);
-        sepLine.SetValue(System.Windows.Controls.Border.MarginProperty, new Thickness(8, 4, 8, 4));
-        sepBorder.AppendChild(sepLine);
-        sepTemplate.VisualTree = sepBorder;
-        separatorItem.Template = sepTemplate;
-        
         contextMenu.Items.Add(closeItem);
-        contextMenu.Items.Add(separatorItem);
+        contextMenu.Items.Add(new Separator());
         contextMenu.Items.Add(closeAllItem);
         contextMenu.Items.Add(closeAllButThisItem);
         
@@ -3939,11 +4204,17 @@ Console.WriteLine(""Hello, World!"");
     /// </summary>
     private void UpdateTabStyles()
     {
-        var selectedBg = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#1E1E1E"));
-        var unselectedBg = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2D2D30"));
-        var selectedFg = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F1F1F1"));
-        var unselectedFg = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#9D9D9D"));
-        var purpleAccent = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#9184EE"));
+        // Get theme-aware colors from resources
+        var selectedBg = System.Windows.Application.Current.Resources["ThemeTabSelectedBackgroundBrush"] as SolidColorBrush 
+            ?? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#1E1E1E"));
+        var unselectedBg = System.Windows.Application.Current.Resources["ThemeToolbarBackgroundBrush"] as SolidColorBrush 
+            ?? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2D2D30"));
+        var selectedFg = System.Windows.Application.Current.Resources["ThemeForegroundBrush"] as SolidColorBrush 
+            ?? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F1F1F1"));
+        var unselectedFg = System.Windows.Application.Current.Resources["ThemeDisabledForegroundBrush"] as SolidColorBrush 
+            ?? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#9D9D9D"));
+        var purpleAccent = System.Windows.Application.Current.Resources["ThemePurpleAccentBrush"] as SolidColorBrush 
+            ?? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#9184EE"));
         
         foreach (var doc in _openDocuments)
         {
@@ -4123,13 +4394,21 @@ Console.WriteLine(""Hello, World!"");
         
         try
         {
+            _isSavingFile = true;
             File.WriteAllText(doc.FilePath, doc.TextDocument.Text);
+            doc.LastKnownWriteTime = File.GetLastWriteTimeUtc(doc.FilePath);
+            _isSavingFile = false;
             doc.IsDirty = false;
             AddToRecentFiles(doc.FilePath);
+            
+            // Set up file watcher for the saved file
+            SetupFileWatcher(doc.FilePath);
+            
             return true;
         }
         catch (Exception ex)
         {
+            _isSavingFile = false;
             MessageBox.Show($"Failed to save file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
@@ -4220,7 +4499,11 @@ Console.WriteLine(""Hello, World!"");
         {
             var content = File.ReadAllText(filePath);
             var doc = CreateNewDocument(filePath, content);
+            doc.LastKnownWriteTime = File.GetLastWriteTimeUtc(filePath);
             SwitchToDocument(doc);
+            
+            // Set up file watcher for external change detection
+            SetupFileWatcher(filePath);
             
             // Update current browser path for Open/Save dialogs
             var folder = Path.GetDirectoryName(filePath);
@@ -4258,7 +4541,11 @@ Console.WriteLine(""Hello, World!"");
             // Open file from command line
             var content = File.ReadAllText(args[1]);
             var doc = CreateNewDocument(args[1], content);
+            doc.LastKnownWriteTime = File.GetLastWriteTimeUtc(args[1]);
             SwitchToDocument(doc);
+            
+            // Set up file watcher for external change detection
+            SetupFileWatcher(args[1]);
             
             // Update current browser path for Open/Save dialogs
             var folder = Path.GetDirectoryName(args[1]);
@@ -4279,6 +4566,151 @@ Console.WriteLine(""Hello, World!"");
     }
     
     private bool _showNewDocumentDialogOnLoad = false;
+    
+    /// <summary>
+    /// Sets up a FileSystemWatcher to monitor the current file for external changes
+    /// </summary>
+    private void SetupFileWatcher(string? filePath)
+    {
+        // Dispose existing watcher
+        _fileWatcher?.Dispose();
+        _fileWatcher = null;
+        
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            return;
+        
+        try
+        {
+            var directory = Path.GetDirectoryName(filePath);
+            var fileName = Path.GetFileName(filePath);
+            
+            if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(fileName))
+                return;
+            
+            _fileWatcher = new FileSystemWatcher(directory, fileName)
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                EnableRaisingEvents = true
+            };
+            
+            _fileWatcher.Changed += FileWatcher_Changed;
+        }
+        catch (Exception)
+        {
+            // Silently fail if we can't set up the watcher (e.g., network path issues)
+            _fileWatcher?.Dispose();
+            _fileWatcher = null;
+        }
+    }
+    
+    /// <summary>
+    /// Handles file change notifications from FileSystemWatcher
+    /// </summary>
+    private void FileWatcher_Changed(object sender, FileSystemEventArgs e)
+    {
+        // Ignore if we're saving the file ourselves or reloading
+        if (_isSavingFile || _isReloadingFile)
+            return;
+        
+        // Find the document that matches this file
+        var changedDoc = _openDocuments.FirstOrDefault(d => 
+            string.Equals(d.FilePath, e.FullPath, StringComparison.OrdinalIgnoreCase));
+        
+        if (changedDoc == null)
+            return;
+        
+        // Check if the file's write time has actually changed
+        try
+        {
+            var currentWriteTime = File.GetLastWriteTimeUtc(e.FullPath);
+            if (currentWriteTime <= changedDoc.LastKnownWriteTime)
+                return;
+            
+            // Mark that an external change was detected
+            changedDoc.ExternalChangeDetected = true;
+            changedDoc.LastKnownWriteTime = currentWriteTime;
+            
+            // Show prompt on UI thread
+            Dispatcher.BeginInvoke(new Action(() => PromptForFileReload(changedDoc)));
+        }
+        catch (Exception)
+        {
+            // File might be locked or inaccessible, ignore
+        }
+    }
+    
+    /// <summary>
+    /// Prompts the user to reload a file that was modified externally
+    /// </summary>
+    private void PromptForFileReload(DocumentModel doc)
+    {
+        if (!doc.ExternalChangeDetected || string.IsNullOrEmpty(doc.FilePath))
+            return;
+        
+        // Reset the flag
+        doc.ExternalChangeDetected = false;
+        
+        var fileName = Path.GetFileName(doc.FilePath);
+        var message = doc.IsDirty
+            ? $"The file '{fileName}' has been modified outside the editor.\n\nYou have unsaved changes. Do you want to reload the file and lose your changes?"
+            : $"The file '{fileName}' has been modified outside the editor.\n\nDo you want to reload it?";
+        
+        var result = MessageBox.Show(
+            message,
+            "File Changed",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        
+        if (result == MessageBoxResult.Yes)
+        {
+            ReloadDocument(doc);
+        }
+    }
+    
+    /// <summary>
+    /// Reloads a document from disk
+    /// </summary>
+    private void ReloadDocument(DocumentModel doc)
+    {
+        if (string.IsNullOrEmpty(doc.FilePath) || !File.Exists(doc.FilePath))
+        {
+            MessageBox.Show("The file no longer exists.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        
+        try
+        {
+            _isReloadingFile = true;
+            
+            var content = File.ReadAllText(doc.FilePath);
+            doc.LastKnownWriteTime = File.GetLastWriteTimeUtc(doc.FilePath);
+            
+            // Preserve caret position if possible
+            var caretOffset = doc.TextDocument.TextLength > 0 ? Math.Min(doc.CaretOffset, content.Length) : 0;
+            
+            doc.TextDocument.Text = content;
+            doc.IsDirty = false;
+            
+            // If this is the active document, update the editor
+            if (doc == _activeDocument)
+            {
+                try
+                {
+                    CodeEditor.CaretOffset = Math.Min(caretOffset, doc.TextDocument.TextLength);
+                }
+                catch { }
+                
+                RenderPreview();
+            }
+            
+            _isReloadingFile = false;
+        }
+        catch (Exception ex)
+        {
+            _isReloadingFile = false;
+            MessageBox.Show($"Failed to reload file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
     
     private void ShowStartupNewDocumentDialog()
     {
@@ -4305,7 +4737,11 @@ Console.WriteLine(""Hello, World!"");
                     
                     var content = File.ReadAllText(openDialog.FileName);
                     var doc = CreateNewDocument(openDialog.FileName, content);
+                    doc.LastKnownWriteTime = File.GetLastWriteTimeUtc(openDialog.FileName);
                     SwitchToDocument(doc);
+                    
+                    // Set up file watcher for external change detection
+                    SetupFileWatcher(openDialog.FileName);
                     
                     var folder = Path.GetDirectoryName(openDialog.FileName);
                     if (!string.IsNullOrEmpty(folder))
@@ -4451,6 +4887,10 @@ public class DocumentModel : System.ComponentModel.INotifyPropertyChanged
     // Preview state
     public double PreviewZoom { get; set; } = 1.0;
     public bool HasNavigatedAway { get; set; }
+    
+    // File change detection
+    public DateTime LastKnownWriteTime { get; set; }
+    public bool ExternalChangeDetected { get; set; }
     
     // UI element references for the tab
     public System.Windows.Controls.Button? TabButton { get; set; }
