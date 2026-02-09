@@ -553,6 +553,13 @@ Console.WriteLine(""Hello, World!"");
             
             // Load recent files
             LoadRecentFiles();
+            
+            // Show New Document dialog if no file was opened via command line
+            if (_showNewDocumentDialogOnLoad)
+            {
+                _showNewDocumentDialogOnLoad = false;
+                ShowStartupNewDocumentDialog();
+            }
         }
         catch (Exception ex)
         {
@@ -2887,10 +2894,26 @@ Console.WriteLine(""Hello, World!"");
         }
     }
 
+    private void MarkdownHelp_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "https://www.markdownguide.org/basic-syntax/",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to open browser: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(
-            "Mermaid Editor v1.7.1\n\n" +
+            "Mermaid Editor v1.7.2\n\n" +
             "A visual IDE for editing Mermaid diagrams and Markdown files.\n\n" +
             "Features:\n" +
             "- Live preview as you type\n" +
@@ -4248,10 +4271,68 @@ Console.WriteLine(""Hello, World!"");
         }
         else
         {
-            // Create new untitled document
+            // Create a temporary blank document - the New Document dialog will be shown after window loads
             var doc = CreateNewDocument();
             SwitchToDocument(doc);
+            _showNewDocumentDialogOnLoad = true;
         }
+    }
+    
+    private bool _showNewDocumentDialogOnLoad = false;
+    
+    private void ShowStartupNewDocumentDialog()
+    {
+        var dialog = new NewDocumentDialog { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            if (dialog.OpenExistingFile)
+            {
+                // User wants to open an existing file
+                var openDialog = new Microsoft.Win32.OpenFileDialog
+                {
+                    Filter = "All Supported Files|*.mmd;*.md|Mermaid Files (*.mmd)|*.mmd|Markdown Files (*.md)|*.md|All Files (*.*)|*.*",
+                    InitialDirectory = _currentBrowserPath ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+                };
+                
+                if (openDialog.ShowDialog() == true)
+                {
+                    // Close the temporary blank document and open the selected file
+                    if (_openDocuments.Count == 1 && _activeDocument != null && 
+                        string.IsNullOrEmpty(_activeDocument.FilePath) && !_activeDocument.IsDirty)
+                    {
+                        CloseDocument(_activeDocument);
+                    }
+                    
+                    var content = File.ReadAllText(openDialog.FileName);
+                    var doc = CreateNewDocument(openDialog.FileName, content);
+                    SwitchToDocument(doc);
+                    
+                    var folder = Path.GetDirectoryName(openDialog.FileName);
+                    if (!string.IsNullOrEmpty(folder))
+                    {
+                        _currentBrowserPath = folder;
+                    }
+                    
+                    AddToRecentFiles(openDialog.FileName);
+                }
+                // If user cancelled open dialog, keep the blank document
+            }
+            else if (dialog.SelectedTemplate != null)
+            {
+                // Replace the blank document content with the selected template
+                if (_activeDocument != null)
+                {
+                    _activeDocument.TextDocument.Text = dialog.SelectedTemplate;
+                    _activeDocument.RenderMode = dialog.IsMermaid ? RenderMode.Mermaid : RenderMode.Markdown;
+                    _activeDocument.IsDirty = false;
+                    _currentRenderMode = _activeDocument.RenderMode;
+                    UpdateExportMenuVisibility();
+                    RenderPreview();
+                }
+            }
+            // If no template selected, keep the blank document
+        }
+        // If user cancelled dialog, keep the blank document
     }
     
     #endregion
