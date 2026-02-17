@@ -859,15 +859,33 @@ Console.WriteLine(""Hello, World!"");
         {
             try
             {
-                // Update diagram without reloading the page - pan/zoom position is preserved
-                await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
-                    (function() {{
-                        if (typeof updateDiagram === 'function') {{
-                            updateDiagram({escapedCode});
-                        }}
-                    }})();
-                ");
+                // When switching documents, we need to apply the document's zoom level
+                // Otherwise, preserve the current pan/zoom position for normal edits
+                if (_isSwitchingDocuments)
+                {
+                    // Update diagram and pass the document's zoom level as second parameter
+                    // This ensures the correct zoom is applied after the async render completes
+                    await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                        (function() {{
+                            if (typeof updateDiagram === 'function') {{
+                                updateDiagram({escapedCode}, {_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)});
+                            }}
+                        }})();
+                    ");
+                }
+                else
+                {
+                    // Update diagram without reloading the page - pan/zoom position is preserved
+                    await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                        (function() {{
+                            if (typeof updateDiagram === 'function') {{
+                                updateDiagram({escapedCode});
+                            }}
+                        }})();
+                    ");
+                }
                 StatusText.Text = "Mermaid rendered";
+                UpdateZoomUI();
                 return;
             }
             catch
@@ -906,16 +924,18 @@ Console.WriteLine(""Hello, World!"");
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             display: inline-block;
-            min-width: 2000px;
         }}
         #diagram.has-error {{
-            min-width: auto;
             max-width: calc(100vw - 60px);
         }}
         #diagram svg {{
             display: block;
+        }}
+        /* Override Mermaid's huge inline width styles ONLY for gantt charts */
+        #diagram svg[aria-roledescription=""gantt""] {{
+            width: auto !important;
+            min-width: auto !important;
             max-width: none !important;
-            min-width: 100% !important;
         }}
         .error {{
             color: #d32f2f;
@@ -954,41 +974,38 @@ Console.WriteLine(""Hello, World!"");
             const diagram = document.getElementById('diagram');
             const svg = document.querySelector('#diagram svg');
             
-            // Fix SVG and container dimensions after render
+            // Auto-size the container to fit the actual SVG content
             if (svg) {{
-                // Get actual SVG dimensions
-                let svgWidth = 0;
-                let svgHeight = 0;
-                
-                // Try viewBox first
-                const viewBox = svg.getAttribute('viewBox');
-                if (viewBox) {{
-                    const parts = viewBox.split(' ');
-                    if (parts.length === 4) {{
-                        svgWidth = parseFloat(parts[2]);
-                        svgHeight = parseFloat(parts[3]);
-                    }}
-                }}
-                
-                // Fall back to getBBox
-                if (svgWidth === 0 || svgHeight === 0) {{
-                    try {{
-                        const bbox = svg.getBBox();
-                        svgWidth = bbox.width + 40;
-                        svgHeight = bbox.height + 40;
-                    }} catch (e) {{ }}
-                }}
-                
-                // Set SVG dimensions
-                if (svgWidth > 0 && svgHeight > 0) {{
-                    svg.style.width = svgWidth + 'px';
-                    svg.style.height = svgHeight + 'px';
-                    svg.style.minWidth = svgWidth + 'px';
-                    svg.style.minHeight = svgHeight + 'px';
+                try {{
+                    // Actually remove Mermaid's inline width/min-width styles using removeProperty
+                    // Setting to '' doesn't work - must use removeProperty to truly remove inline styles
+                    svg.style.removeProperty('width');
+                    svg.style.removeProperty('min-width');
+                    svg.style.removeProperty('max-width');
+                    svg.style.removeProperty('height');
+                    svg.style.removeProperty('min-height');
                     
-                    // Shrink container to fit SVG (remove the large min-width)
-                    diagram.style.minWidth = 'auto';
-                    diagram.style.width = 'auto';
+                    // Get dimensions from viewBox if available (more reliable for gantt charts)
+                    const viewBox = svg.getAttribute('viewBox');
+                    if (viewBox) {{
+                        const parts = viewBox.split(' ').map(Number);
+                        if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {{
+                            const padding = 20;
+                            svg.setAttribute('width', parts[2] + padding);
+                            svg.setAttribute('height', parts[3] + padding);
+                        }}
+                    }} else {{
+                        // Fall back to getBBox for diagrams without viewBox
+                        const bbox = svg.getBBox();
+                        if (bbox && bbox.width > 0 && bbox.height > 0) {{
+                            const padding = 20;
+                            svg.setAttribute('width', bbox.width + padding);
+                            svg.setAttribute('height', bbox.height + padding);
+                            svg.setAttribute('viewBox', `${{bbox.x - padding/2}} ${{bbox.y - padding/2}} ${{bbox.width + padding}} ${{bbox.height + padding}}`);
+                        }}
+                    }}
+                }} catch (e) {{
+                    // getBBox may fail in some cases, just continue
                 }}
             }}
             
@@ -1230,9 +1247,11 @@ Console.WriteLine(""Hello, World!"");
         }};
         
         // Update diagram content without reloading the page (preserves pan/zoom position)
-        window.updateDiagram = function(newCode) {{
+        // Optional targetZoom parameter allows overriding the zoom level (used when switching documents)
+        window.updateDiagram = function(newCode, targetZoom) {{
             // Save current panzoom transform (only zoom level, not position - position causes issues when diagram size changes)
-            let savedZoom = currentZoom;
+            // If targetZoom is provided, use that instead of the current zoom (for document switching)
+            let savedZoom = (typeof targetZoom === 'number') ? targetZoom : currentZoom;
             let savedTransform = null;
             if (panzoomInstance) {{
                 savedTransform = panzoomInstance.getTransform();
@@ -1671,7 +1690,12 @@ Console.WriteLine(""Hello, World!"");
                 if (messageType == "zoom" && message.RootElement.TryGetProperty("level", out var levelElement))
                 {
                     _currentZoom = levelElement.GetDouble();
-                    ZoomLevelText.Text = $"{_currentZoom * 100:F0}%";
+                    // Also update the active document's zoom so it's preserved when switching tabs
+                    if (_activeDocument != null)
+                    {
+                        _activeDocument.PreviewZoom = _currentZoom;
+                    }
+                    UpdateZoomUI();
                 }
                 else if (messageType == "pngExport" && message.RootElement.TryGetProperty("data", out var dataElement))
                 {
@@ -2204,6 +2228,16 @@ Console.WriteLine(""Hello, World!"");
                 }
                 
                 UpdateExportMenuVisibility();
+                
+                // Auto fit to window after template loads
+                _ = Dispatcher.InvokeAsync(async () =>
+                {
+                    await Task.Delay(500); // Wait for render to complete
+                    if (_webViewInitialized)
+                    {
+                        await PreviewWebView.CoreWebView2.ExecuteScriptAsync("window.fitToWindow()");
+                    }
+                });
             }
         }
     }
@@ -3172,6 +3206,133 @@ Console.WriteLine(""Hello, World!"");
         Close();
     }
 
+    private async void PrintPreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_webViewInitialized) return;
+
+        try
+        {
+            // Capture the current diagram/markdown as an image
+            var pngBytes = await CaptureDiagramAsPngBytes();
+            if (pngBytes == null || pngBytes.Length == 0)
+            {
+                MessageBox.Show("Unable to capture the preview for printing.", "Print Error", 
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Convert bytes to BitmapSource
+            using var stream = new MemoryStream(pngBytes);
+            var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = stream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            // Get document title for print job
+            var documentTitle = _activeDocument?.DisplayName ?? "Untitled";
+            if (documentTitle.EndsWith(".mmd") || documentTitle.EndsWith(".md"))
+                documentTitle = Path.GetFileNameWithoutExtension(documentTitle);
+
+            // Show print preview dialog
+            var printDialog = new PrintPreviewDialog(bitmap, documentTitle);
+            printDialog.Owner = this;
+            printDialog.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error preparing print preview: {ex.Message}", "Print Error", 
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task<byte[]?> CaptureDiagramAsPngBytes()
+    {
+        if (!_webViewInitialized) return null;
+
+        try
+        {
+            // For Mermaid diagrams, use high-res SVG export to capture full diagram
+            if (_currentRenderMode == RenderMode.Mermaid)
+            {
+                // Use scale 2 for print preview (good balance of quality and performance)
+                _pngExportTcs = new TaskCompletionSource<string>();
+                
+                await PreviewWebView.CoreWebView2.ExecuteScriptAsync("window.exportPngHighRes(2)");
+                
+                // Wait for the callback with a timeout
+                var timeoutTask = Task.Delay(15000); // 15 second timeout
+                var completedTask = await Task.WhenAny(_pngExportTcs.Task, timeoutTask);
+                
+                if (completedTask == timeoutTask)
+                {
+                    _pngExportTcs = null;
+                    // Fall back to viewport capture on timeout
+                    return await CaptureViewportAsPngBytes();
+                }
+                
+                var dataUrl = await _pngExportTcs.Task;
+                _pngExportTcs = null;
+                
+                if (!string.IsNullOrEmpty(dataUrl) && dataUrl.StartsWith("data:image/png;base64,"))
+                {
+                    var base64Data = dataUrl.Substring("data:image/png;base64,".Length);
+                    return Convert.FromBase64String(base64Data);
+                }
+                
+                // Fall back to viewport capture if high-res export fails
+                return await CaptureViewportAsPngBytes();
+            }
+            else
+            {
+                // For Markdown, use viewport capture
+                return await CaptureViewportAsPngBytes();
+            }
+        }
+        catch
+        {
+            // Fall back to viewport capture on any error
+            try
+            {
+                return await CaptureViewportAsPngBytes();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private async Task<byte[]?> CaptureViewportAsPngBytes()
+    {
+        using var memoryStream = new MemoryStream();
+        await PreviewWebView.CoreWebView2.CapturePreviewAsync(
+            CoreWebView2CapturePreviewImageFormat.Png, memoryStream);
+        memoryStream.Position = 0;
+        return memoryStream.ToArray();
+    }
+
+    private void PrintCode_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Get the code from the editor
+            var code = CodeEditor.Text;
+            var documentTitle = _activeDocument?.DisplayName ?? "Untitled";
+
+            // Show print code preview dialog
+            var printCodeDialog = new PrintCodePreviewDialog(code, documentTitle);
+            printCodeDialog.Owner = this;
+            printCodeDialog.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error printing code: {ex.Message}", "Print Error", 
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private bool _isUpdatingZoomSlider = false;
     
     private async void ZoomIn_Click(object sender, RoutedEventArgs e)
@@ -3192,6 +3353,11 @@ Console.WriteLine(""Hello, World!"");
     {
         if (!_webViewInitialized) return;
         _currentZoom = 1.0;
+        // Sync zoom to active document so it's preserved when switching tabs
+        if (_activeDocument != null)
+        {
+            _activeDocument.PreviewZoom = _currentZoom;
+        }
         await PreviewWebView.CoreWebView2.ExecuteScriptAsync("window.resetView()");
         UpdateZoomUI();
     }
@@ -3206,12 +3372,22 @@ Console.WriteLine(""Hello, World!"");
     {
         if (_isUpdatingZoomSlider || !_webViewInitialized) return;
         _currentZoom = e.NewValue / 100.0;
+        // Sync zoom to active document so it's preserved when switching tabs
+        if (_activeDocument != null)
+        {
+            _activeDocument.PreviewZoom = _currentZoom;
+        }
         await PreviewWebView.CoreWebView2.ExecuteScriptAsync($"window.setZoom({_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         ZoomLevelText.Text = $"{e.NewValue:F0}%";
     }
     
     private async Task ApplyZoom()
     {
+        // Sync zoom to active document so it's preserved when switching tabs
+        if (_activeDocument != null)
+        {
+            _activeDocument.PreviewZoom = _currentZoom;
+        }
         await PreviewWebView.CoreWebView2.ExecuteScriptAsync($"window.setZoom({_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         UpdateZoomUI();
     }
@@ -3321,7 +3497,7 @@ Console.WriteLine(""Hello, World!"");
         });
         titlePanel.Children.Add(new TextBlock
         {
-            Text = "Version 2.0.0",
+            Text = "Version 2.1.0",
             FontSize = 14,
             Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeDisabledForegroundBrush"],
             Margin = new Thickness(0, 4, 0, 0)
@@ -3540,16 +3716,18 @@ Console.WriteLine(""Hello, World!"");
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             display: inline-block;
-            min-width: 2000px;
         }}
         #diagram.has-error {{
-            min-width: auto;
             max-width: calc(100vw - 60px);
         }}
         #diagram svg {{
             display: block;
+        }}
+        /* Override Mermaid's huge inline width styles ONLY for gantt charts */
+        #diagram svg[aria-roledescription=""gantt""] {{
+            width: auto !important;
+            min-width: auto !important;
             max-width: none !important;
-            min-width: 100% !important;
         }}
     </style>
 </head>
@@ -3560,41 +3738,47 @@ Console.WriteLine(""Hello, World!"");
         </div>
     </div>
     <script>
-        mermaid.initialize({{ startOnLoad: true, theme: 'default', securityLevel: 'loose' }});
+        mermaid.initialize({{ 
+            startOnLoad: true, 
+            theme: 'default', 
+            securityLevel: 'loose'
+        }});
         mermaid.run().then(() => {{
             const diagram = document.getElementById('diagram');
             const svg = document.querySelector('#diagram svg');
             
-            // Fix SVG and container dimensions after render
+            // Auto-size the container to fit the actual SVG content
             if (svg) {{
-                let svgWidth = 0;
-                let svgHeight = 0;
-                
-                const viewBox = svg.getAttribute('viewBox');
-                if (viewBox) {{
-                    const parts = viewBox.split(' ');
-                    if (parts.length === 4) {{
-                        svgWidth = parseFloat(parts[2]);
-                        svgHeight = parseFloat(parts[3]);
-                    }}
-                }}
-                
-                if (svgWidth === 0 || svgHeight === 0) {{
-                    try {{
-                        const bbox = svg.getBBox();
-                        svgWidth = bbox.width + 40;
-                        svgHeight = bbox.height + 40;
-                    }} catch (e) {{ }}
-                }}
-                
-                if (svgWidth > 0 && svgHeight > 0) {{
-                    svg.style.width = svgWidth + 'px';
-                    svg.style.height = svgHeight + 'px';
-                    svg.style.minWidth = svgWidth + 'px';
-                    svg.style.minHeight = svgHeight + 'px';
+                try {{
+                    // Actually remove Mermaid's inline width/min-width styles using removeProperty
+                    // Setting to '' doesn't work - must use removeProperty to truly remove inline styles
+                    svg.style.removeProperty('width');
+                    svg.style.removeProperty('min-width');
+                    svg.style.removeProperty('max-width');
+                    svg.style.removeProperty('height');
+                    svg.style.removeProperty('min-height');
                     
-                    diagram.style.minWidth = 'auto';
-                    diagram.style.width = 'auto';
+                    // Get dimensions from viewBox if available (more reliable for gantt charts)
+                    const viewBox = svg.getAttribute('viewBox');
+                    if (viewBox) {{
+                        const parts = viewBox.split(' ').map(Number);
+                        if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {{
+                            const padding = 20;
+                            svg.setAttribute('width', parts[2] + padding);
+                            svg.setAttribute('height', parts[3] + padding);
+                        }}
+                    }} else {{
+                        // Fall back to getBBox for diagrams without viewBox
+                        const bbox = svg.getBBox();
+                        if (bbox && bbox.width > 0 && bbox.height > 0) {{
+                            const padding = 20;
+                            svg.setAttribute('width', bbox.width + padding);
+                            svg.setAttribute('height', bbox.height + padding);
+                            svg.setAttribute('viewBox', `${{bbox.x - padding/2}} ${{bbox.y - padding/2}} ${{bbox.width + padding}} ${{bbox.height + padding}}`);
+                        }}
+                    }}
+                }} catch (e) {{
+                    // getBBox may fail in some cases, just continue
                 }}
             }}
             
@@ -4738,12 +4922,13 @@ Console.WriteLine(""Hello, World!"");
         UpdateExportMenuVisibility();
         UpdateUndoRedoState();
         
-        _isSwitchingDocuments = false;
-        
         // Re-render preview for the new document
         // This will trigger NavigateToString which resets _hasNavigatedAway to false
         // and keeps the back button disabled for fresh renders
+        // Note: _isSwitchingDocuments stays true during RenderPreview() so zoom can be restored
         RenderPreview();
+        
+        _isSwitchingDocuments = false;
     }
     
     /// <summary>
@@ -5055,6 +5240,16 @@ Console.WriteLine(""Hello, World!"");
                     _currentRenderMode = _activeDocument.RenderMode;
                     UpdateExportMenuVisibility();
                     RenderPreview();
+                    
+                    // Auto fit to window after template loads
+                    _ = Dispatcher.InvokeAsync(async () =>
+                    {
+                        await Task.Delay(500); // Wait for render to complete
+                        if (_webViewInitialized)
+                        {
+                            await PreviewWebView.CoreWebView2.ExecuteScriptAsync("window.fitToWindow()");
+                        }
+                    });
                 }
             }
             // If no template selected, keep the blank document
