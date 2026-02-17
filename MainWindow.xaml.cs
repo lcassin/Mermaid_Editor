@@ -859,16 +859,20 @@ Console.WriteLine(""Hello, World!"");
         {
             try
             {
-                // When switching documents, we need to apply the document's zoom level
+                // When switching documents, we need to apply the document's zoom level, scroll position, and pan position
                 // Otherwise, preserve the current pan/zoom position for normal edits
-                if (_isSwitchingDocuments)
+                if (_isSwitchingDocuments && _activeDocument != null)
                 {
-                    // Update diagram and pass the document's zoom level as second parameter
-                    // This ensures the correct zoom is applied after the async render completes
+                    // Update diagram and pass the document's zoom level, scroll position, and pan position
+                    // This ensures the correct state is applied after the async render completes
+                    var scrollLeft = _activeDocument.PreviewScrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var scrollTop = _activeDocument.PreviewScrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var panX = _activeDocument.PreviewPanX.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var panY = _activeDocument.PreviewPanY.ToString(System.Globalization.CultureInfo.InvariantCulture);
                     await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
                         (function() {{
                             if (typeof updateDiagram === 'function') {{
-                                updateDiagram({escapedCode}, {_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)});
+                                updateDiagram({escapedCode}, {_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {scrollLeft}, {scrollTop}, {panX}, {panY});
                             }}
                         }})();
                     ");
@@ -894,6 +898,23 @@ Console.WriteLine(""Hello, World!"");
                 _mermaidPageLoaded = false;
             }
         }
+
+        // Get target positions for restoration when switching documents (full page reload path)
+        var targetScrollLeft = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewScrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
+        var targetScrollTop = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewScrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
+        var targetPanX = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewPanX.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
+        var targetPanY = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewPanY.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
+        var targetZoom = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewZoom.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "1";
 
         var html = $@"<!DOCTYPE html>
 <html>
@@ -959,8 +980,16 @@ Console.WriteLine(""Hello, World!"");
         </div>
     </div>
     <script>
-        let panzoomInstance = null;
-        let currentZoom = {_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+        // Use window-level variables so they can be accessed from C# via ExecuteScriptAsync
+        window.panzoomInstance = null;
+        window.currentZoom = {_currentZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+        
+        // Target positions for restoration when switching documents
+        var targetScrollLeft = {targetScrollLeft};
+        var targetScrollTop = {targetScrollTop};
+        var targetPanX = {targetPanX};
+        var targetPanY = {targetPanY};
+        var targetZoom = {targetZoom};
         
         // Don't set theme here - let frontmatter config take precedence
         // Mermaid will parse ---config:--- frontmatter automatically
@@ -1009,7 +1038,7 @@ Console.WriteLine(""Hello, World!"");
                 }}
             }}
             
-            panzoomInstance = panzoom(diagram, {{
+            window.panzoomInstance = panzoom(diagram, {{
                 maxZoom: 10,
                 minZoom: 0.1,
                 initialZoom: 1,
@@ -1017,14 +1046,37 @@ Console.WriteLine(""Hello, World!"");
                 boundsPadding: 0.1
             }});
             
-            // Reset position to top-left after initialization
-            panzoomInstance.moveTo(0, 0);
-            panzoomInstance.zoomAbs(0, 0, 1);
-            currentZoom = 1;
+            // Restore zoom and pan position (use target values if switching documents, otherwise reset to default)
+            var restoreZoom = (targetPanX !== 0 || targetPanY !== 0 || targetZoom !== 1) ? targetZoom : 1;
+            var restorePanX = targetPanX;
+            var restorePanY = targetPanY;
             
-            panzoomInstance.on('zoom', function(e) {{
-                currentZoom = e.getTransform().scale;
-                window.chrome.webview.postMessage({{ type: 'zoom', level: currentZoom }});
+            window.panzoomInstance.zoomAbs(0, 0, restoreZoom);
+            window.currentZoom = restoreZoom;
+            
+            // Use setTimeout to ensure panzoom is fully initialized before setting pan position
+            setTimeout(function() {{
+                window.panzoomInstance.moveTo(restorePanX, restorePanY);
+                
+                // Restore scroll position
+                if (targetScrollLeft !== 0 || targetScrollTop !== 0) {{
+                    container.scrollLeft = targetScrollLeft;
+                    container.scrollTop = targetScrollTop;
+                }}
+                
+                // Notify C# that diagram is ready
+                window.chrome.webview.postMessage({{ 
+                    type: 'diagramReady', 
+                    targetScrollLeft: targetScrollLeft, 
+                    targetScrollTop: targetScrollTop,
+                    targetPanX: restorePanX,
+                    targetPanY: restorePanY
+                }});
+            }}, 50);
+            
+            window.panzoomInstance.on('zoom', function(e) {{
+                window.currentZoom = e.getTransform().scale;
+                window.chrome.webview.postMessage({{ type: 'zoom', level: window.currentZoom }});
             }});
             
             // Add click handlers to diagram nodes for click-to-highlight feature
@@ -1248,21 +1300,27 @@ Console.WriteLine(""Hello, World!"");
         
         // Update diagram content without reloading the page (preserves pan/zoom position)
         // Optional targetZoom parameter allows overriding the zoom level (used when switching documents)
-        window.updateDiagram = function(newCode, targetZoom) {{
+        // Optional targetScrollLeft/targetScrollTop parameters allow overriding scroll position (used when switching documents)
+        // Optional targetPanX/targetPanY parameters allow overriding pan position (used when switching documents)
+        window.updateDiagram = function(newCode, targetZoom, targetScrollLeft, targetScrollTop, targetPanX, targetPanY) {{
             // Save current panzoom transform (only zoom level, not position - position causes issues when diagram size changes)
             // If targetZoom is provided, use that instead of the current zoom (for document switching)
-            let savedZoom = (typeof targetZoom === 'number') ? targetZoom : currentZoom;
+            let savedZoom = (typeof targetZoom === 'number') ? targetZoom : window.currentZoom;
             let savedTransform = null;
-            if (panzoomInstance) {{
-                savedTransform = panzoomInstance.getTransform();
+            if (window.panzoomInstance) {{
+                savedTransform = window.panzoomInstance.getTransform();
             }}
+            
+            // Save pan position (or use provided target pan positions for document switching)
+            let savedPanX = (typeof targetPanX === 'number') ? targetPanX : (savedTransform ? savedTransform.x : 0);
+            let savedPanY = (typeof targetPanY === 'number') ? targetPanY : (savedTransform ? savedTransform.y : 0);
             
             const diagram = document.getElementById('diagram');
             const container = document.getElementById('container');
             
-            // Save scroll position of container
-            const savedScrollLeft = container.scrollLeft;
-            const savedScrollTop = container.scrollTop;
+            // Save scroll position of container (or use provided target scroll positions for document switching)
+            const savedScrollLeft = (typeof targetScrollLeft === 'number') ? targetScrollLeft : container.scrollLeft;
+            const savedScrollTop = (typeof targetScrollTop === 'number') ? targetScrollTop : container.scrollTop;
             
             // Clear existing content and add new mermaid code
             diagram.innerHTML = '<pre class=""mermaid"">' + newCode.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
@@ -1274,9 +1332,9 @@ Console.WriteLine(""Hello, World!"");
             diagram.style.transform = '';
             
             // Destroy old panzoom instance
-            if (panzoomInstance) {{
-                panzoomInstance.dispose();
-                panzoomInstance = null;
+            if (window.panzoomInstance) {{
+                window.panzoomInstance.dispose();
+                window.panzoomInstance = null;
             }}
             
             // Re-render mermaid
@@ -1324,7 +1382,7 @@ Console.WriteLine(""Hello, World!"");
                             setupNodeClickHandlers(svg);
                             
                             // Re-create panzoom
-                            panzoomInstance = panzoom(diagram, {{
+                            window.panzoomInstance = panzoom(diagram, {{
                                 maxZoom: 10,
                                 minZoom: 0.1,
                                 initialZoom: 1,
@@ -1332,25 +1390,29 @@ Console.WriteLine(""Hello, World!"");
                                 boundsPadding: 0.1
                             }});
                             
-                            // Restore zoom level and approximate position
-                            if (savedTransform && savedZoom !== 1) {{
-                                // Only restore zoom, reset position to avoid misalignment
-                                panzoomInstance.moveTo(0, 0);
-                                panzoomInstance.zoomAbs(0, 0, savedZoom);
-                                currentZoom = savedZoom;
-                            }} else {{
-                                panzoomInstance.moveTo(0, 0);
-                                panzoomInstance.zoomAbs(0, 0, 1);
-                                currentZoom = 1;
-                            }}
+                            // Restore zoom level
+                            window.panzoomInstance.zoomAbs(0, 0, savedZoom);
+                            window.currentZoom = savedZoom;
                             
-                            // Restore container scroll position
-                            container.scrollLeft = savedScrollLeft;
-                            container.scrollTop = savedScrollTop;
+                            // Restore pan position (the drag/translate position)
+                            // Use setTimeout to ensure panzoom is fully initialized
+                            setTimeout(function() {{
+                                window.panzoomInstance.moveTo(savedPanX, savedPanY);
+                                
+                                // Notify C# that diagram is ready, passing the target scroll and pan positions
+                                // C# will restore the scroll position to ensure proper timing
+                                window.chrome.webview.postMessage({{ 
+                                    type: 'diagramReady', 
+                                    targetScrollLeft: savedScrollLeft, 
+                                    targetScrollTop: savedScrollTop,
+                                    targetPanX: savedPanX,
+                                    targetPanY: savedPanY
+                                }});
+                            }}, 50);
                             
-                            panzoomInstance.on('zoom', function(e) {{
-                                currentZoom = e.getTransform().scale;
-                                window.chrome.webview.postMessage({{ type: 'zoom', level: currentZoom }});
+                            window.panzoomInstance.on('zoom', function(e) {{
+                                window.currentZoom = e.getTransform().scale;
+                                window.chrome.webview.postMessage({{ type: 'zoom', level: window.currentZoom }});
                             }});
                         }});
                     }}
@@ -1386,14 +1448,42 @@ Console.WriteLine(""Hello, World!"");
         {
             try
             {
-                // Update content without reloading the page - scroll position is naturally preserved
-                await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
-                    (function() {{
-                        const markdownContent = {escapedCode};
-                        document.getElementById('content').innerHTML = marked.parse(markdownContent);
-                        setupClickHandlers();
-                    }})();
-                ");
+                // When switching documents, restore the saved scroll position
+                // Otherwise, preserve the current scroll position for normal edits
+                if (_isSwitchingDocuments && _activeDocument != null)
+                {
+                    var scrollTop = _activeDocument.PreviewScrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var scrollLeft = _activeDocument.PreviewScrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                        (function() {{
+                            const markdownContent = {escapedCode};
+                            document.getElementById('content').innerHTML = marked.parse(markdownContent);
+                            setupClickHandlers();
+                            // Restore scroll position after content is updated
+                            // Try all methods since html/body can both have overflow:auto
+                            setTimeout(function() {{
+                                var x = {scrollLeft};
+                                var y = {scrollTop};
+                                window.scrollTo(x, y);
+                                document.documentElement.scrollLeft = x;
+                                document.documentElement.scrollTop = y;
+                                document.body.scrollLeft = x;
+                                document.body.scrollTop = y;
+                            }}, 50);
+                        }})();
+                    ");
+                }
+                else
+                {
+                    // Update content without reloading the page - scroll position is naturally preserved
+                    await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                        (function() {{
+                            const markdownContent = {escapedCode};
+                            document.getElementById('content').innerHTML = marked.parse(markdownContent);
+                            setupClickHandlers();
+                        }})();
+                    ");
+                }
                 StatusText.Text = "Markdown rendered";
                 return;
             }
@@ -1415,8 +1505,16 @@ Console.WriteLine(""Hello, World!"");
                 baseTag = $@"<base href=""https://{VirtualHostName}/"">";
             }
         }
+        
+        // Get target scroll position for restoration when switching documents
+        var targetScrollLeft = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewScrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
+        var targetScrollTop = (_isSwitchingDocuments && _activeDocument != null) 
+            ? _activeDocument.PreviewScrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture) 
+            : "0";
 
-        var html = $@"<!DOCTYPE html>
+        var html = $@"<!DOCTYPE html
 <html>
 <head>
     <meta charset=""UTF-8"">
@@ -1667,6 +1765,17 @@ Console.WriteLine(""Hello, World!"");
                 }});
             }});
         }}
+        
+        // Notify C# that markdown is ready and pass target scroll position for restoration
+        var targetScrollLeft = {targetScrollLeft};
+        var targetScrollTop = {targetScrollTop};
+        setTimeout(function() {{
+            window.chrome.webview.postMessage({{ 
+                type: 'markdownReady', 
+                targetScrollLeft: targetScrollLeft, 
+                targetScrollTop: targetScrollTop 
+            }});
+        }}, 50);
     </script>
 </body>
 </html>";
@@ -1719,11 +1828,80 @@ Console.WriteLine(""Hello, World!"");
                     var elementType = message.RootElement.TryGetProperty("elementType", out var typeEl) ? typeEl.GetString() : "";
                     FindAndHighlightInEditor("", text, elementType);
                 }
+                else if (messageType == "diagramReady")
+                {
+                    // Diagram has finished rendering - restore scroll position from C#
+                    var scrollLeft = message.RootElement.TryGetProperty("targetScrollLeft", out var scrollLeftEl) ? scrollLeftEl.GetDouble() : 0;
+                    var scrollTop = message.RootElement.TryGetProperty("targetScrollTop", out var scrollTopEl) ? scrollTopEl.GetDouble() : 0;
+                    
+                    // Only restore if we have non-zero scroll values (indicating we're switching documents)
+                    if (scrollLeft > 0 || scrollTop > 0)
+                    {
+                        _ = RestorePreviewScrollPositionAsync(scrollLeft, scrollTop);
+                    }
+                }
+                else if (messageType == "markdownReady")
+                {
+                    // Markdown has finished rendering - restore scroll position from C#
+                    var scrollLeft = message.RootElement.TryGetProperty("targetScrollLeft", out var scrollLeftEl) ? scrollLeftEl.GetDouble() : 0;
+                    var scrollTop = message.RootElement.TryGetProperty("targetScrollTop", out var scrollTopEl) ? scrollTopEl.GetDouble() : 0;
+                    
+                    // Only restore if we have non-zero scroll values (indicating we're switching documents)
+                    if (scrollLeft > 0 || scrollTop > 0)
+                    {
+                        _ = RestoreMarkdownScrollPositionAsync(scrollLeft, scrollTop);
+                    }
+                }
             }
         }
         catch
         {
         }
+    }
+    
+    private async Task RestorePreviewScrollPositionAsync(double scrollLeft, double scrollTop)
+    {
+        if (!_webViewInitialized) return;
+        
+        try
+        {
+            // Use ExecuteScriptAsync to set the scroll position from C#
+            // This ensures proper timing after the diagram is fully rendered
+            await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                (function() {{
+                    var container = document.getElementById('container');
+                    if (container) {{
+                        container.scrollLeft = {scrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+                        container.scrollTop = {scrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+                    }}
+                }})();
+            ");
+        }
+        catch { }
+    }
+    
+    private async Task RestoreMarkdownScrollPositionAsync(double scrollLeft, double scrollTop)
+    {
+        if (!_webViewInitialized) return;
+        
+        try
+        {
+            // Use ExecuteScriptAsync to set the scroll position for markdown
+            // Try multiple methods since html/body can both have overflow:auto
+            await PreviewWebView.CoreWebView2.ExecuteScriptAsync($@"
+                (function() {{
+                    var x = {scrollLeft.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+                    var y = {scrollTop.ToString(System.Globalization.CultureInfo.InvariantCulture)};
+                    // Try all methods to ensure scroll is set
+                    window.scrollTo(x, y);
+                    document.documentElement.scrollLeft = x;
+                    document.documentElement.scrollTop = y;
+                    document.body.scrollLeft = x;
+                    document.body.scrollTop = y;
+                }})();
+            ");
+        }
+        catch { }
     }
 
     private void FindAndHighlightInEditor(string? nodeId, string? text, string? elementType = null)
@@ -3399,6 +3577,53 @@ Console.WriteLine(""Hello, World!"");
         ZoomLevelText.Text = $"{_currentZoom * 100:F0}%";
         _isUpdatingZoomSlider = false;
     }
+    
+    /// <summary>
+    /// Saves the current preview scroll position and panzoom pan position to the document model
+    /// </summary>
+    private async Task SavePreviewScrollPositionAsync(DocumentModel doc)
+    {
+        if (!_webViewInitialized || doc == null) return;
+        
+        try
+        {
+            // Get both scroll position and panzoom transform
+            // For Mermaid: use container element scroll and panzoom transform
+            // For Markdown: use window/document scroll (no panzoom)
+            var result = await PreviewWebView.CoreWebView2.ExecuteScriptAsync(@"
+                (function() {
+                    var container = document.getElementById('container');
+                    var transform = window.panzoomInstance ? window.panzoomInstance.getTransform() : { x: 0, y: 0, scale: 1 };
+                    var scrollLeft, scrollTop;
+                    if (container) {
+                        // Mermaid diagram - use container scroll
+                        scrollLeft = container.scrollLeft;
+                        scrollTop = container.scrollTop;
+                    } else {
+                        // Markdown - try multiple scroll sources (html/body can both have overflow:auto)
+                        scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+                        scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                    }
+                    return JSON.stringify({ 
+                        scrollLeft: scrollLeft || 0, 
+                        scrollTop: scrollTop || 0,
+                        panX: transform.x || 0,
+                        panY: transform.y || 0
+                    });
+                })()
+            ");
+            
+            if (!string.IsNullOrEmpty(result) && result != "null")
+            {
+                var json = System.Text.Json.JsonDocument.Parse(result.Trim('"').Replace("\\\"", "\""));
+                doc.PreviewScrollLeft = json.RootElement.GetProperty("scrollLeft").GetDouble();
+                doc.PreviewScrollTop = json.RootElement.GetProperty("scrollTop").GetDouble();
+                doc.PreviewPanX = json.RootElement.GetProperty("panX").GetDouble();
+                doc.PreviewPanY = json.RootElement.GetProperty("panY").GetDouble();
+            }
+        }
+        catch { }
+    }
 
     private void SyntaxHelp_Click(object sender, RoutedEventArgs e)
     {
@@ -3497,7 +3722,7 @@ Console.WriteLine(""Hello, World!"");
         });
         titlePanel.Children.Add(new TextBlock
         {
-            Text = "Version 2.1.0",
+            Text = "Version 2.2.0",
             FontSize = 14,
             Foreground = (SolidColorBrush)System.Windows.Application.Current.Resources["ThemeDisabledForegroundBrush"],
             Margin = new Thickness(0, 4, 0, 0)
@@ -4867,7 +5092,7 @@ Console.WriteLine(""Hello, World!"");
     /// <summary>
     /// Switches to a different document
     /// </summary>
-    private void SwitchToDocument(DocumentModel doc)
+    private async void SwitchToDocument(DocumentModel doc)
     {
         if (_activeDocument == doc) return;
         
@@ -4879,9 +5104,14 @@ Console.WriteLine(""Hello, World!"");
             _activeDocument.CaretOffset = CodeEditor.CaretOffset;
             _activeDocument.VerticalScrollOffset = CodeEditor.VerticalOffset;
             _activeDocument.HorizontalScrollOffset = CodeEditor.HorizontalOffset;
+            _activeDocument.SelectionStart = CodeEditor.SelectionStart;
+            _activeDocument.SelectionLength = CodeEditor.SelectionLength;
             _activeDocument.PreviewZoom = _currentZoom;
             _activeDocument.HasNavigatedAway = _hasNavigatedAway;
             _activeDocument.IsSelected = false;
+            
+            // Save preview scroll position - must await to ensure it's saved before switching
+            await SavePreviewScrollPositionAsync(_activeDocument);
         }
         
         // Switch to new document
@@ -4912,6 +5142,14 @@ Console.WriteLine(""Hello, World!"");
             CodeEditor.CaretOffset = Math.Min(doc.CaretOffset, doc.TextDocument.TextLength);
             CodeEditor.ScrollToVerticalOffset(doc.VerticalScrollOffset);
             CodeEditor.ScrollToHorizontalOffset(doc.HorizontalScrollOffset);
+            
+            // Restore selection if there was one
+            if (doc.SelectionLength > 0)
+            {
+                var selStart = Math.Min(doc.SelectionStart, doc.TextDocument.TextLength);
+                var selLength = Math.Min(doc.SelectionLength, doc.TextDocument.TextLength - selStart);
+                CodeEditor.Select(selStart, selLength);
+            }
         }
         catch { }
         
@@ -5369,10 +5607,16 @@ public class DocumentModel : System.ComponentModel.INotifyPropertyChanged
     public int CaretOffset { get; set; }
     public double VerticalScrollOffset { get; set; }
     public double HorizontalScrollOffset { get; set; }
+    public int SelectionStart { get; set; }
+    public int SelectionLength { get; set; }
     
     // Preview state
     public double PreviewZoom { get; set; } = 1.0;
     public bool HasNavigatedAway { get; set; }
+    public double PreviewScrollLeft { get; set; }
+    public double PreviewScrollTop { get; set; }
+    public double PreviewPanX { get; set; }
+    public double PreviewPanY { get; set; }
     
     // File change detection
     public DateTime LastKnownWriteTime { get; set; }
