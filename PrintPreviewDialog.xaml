@@ -100,11 +100,173 @@
             <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorderBrush}"/>
             <Setter Property="Padding" Value="16,8"/>
             <Setter Property="Margin" Value="4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" 
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#3E3E42"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#007ACC"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#007ACC"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#007ACC"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="#2D2D30"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#3E3E42"/>
+                                <Setter Property="Foreground" Value="#656565"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="GroupBox">
             <Setter Property="Foreground" Value="{DynamicResource ThemeForegroundBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorderBrush}"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GroupBox">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <!-- Header -->
+                            <TextBlock Grid.Row="0" Text="{TemplateBinding Header}" 
+                                       Foreground="{DynamicResource ThemeForegroundBrush}" 
+                                       FontSize="12" Margin="0,0,0,6"/>
+                            <!-- Content with single-line border -->
+                            <Border Grid.Row="1" 
+                                    BorderBrush="{DynamicResource ThemeBorderBrush}" 
+                                    BorderThickness="1" CornerRadius="4" Padding="4">
+                                <ContentPresenter/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Dark ScrollBar Thumb -->
+        <Style x:Key="DarkScrollBarThumb" TargetType="Thumb">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="thumbBorder" Background="#686868" CornerRadius="4" 
+                                Margin="2" MinHeight="18" MinWidth="18"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="thumbBorder" Property="Background" Value="#9E9E9E"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="thumbBorder" Property="Background" Value="#BFBFBF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark ScrollBar Line Button (arrows) -->
+        <Style x:Key="DarkScrollBarLineButton" TargetType="RepeatButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border x:Name="border" Background="#3E3E42" Height="0" Width="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark ScrollBar Page Button (track) -->
+        <Style x:Key="DarkScrollBarPageButton" TargetType="RepeatButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark Vertical ScrollBar Template -->
+        <ControlTemplate x:Key="DarkVerticalScrollBar" TargetType="ScrollBar">
+            <Grid Background="#2D2D30">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <RepeatButton Grid.Row="0" Style="{StaticResource DarkScrollBarLineButton}" Command="ScrollBar.LineUpCommand"/>
+                <Track x:Name="PART_Track" Grid.Row="1" IsDirectionReversed="True">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource DarkScrollBarPageButton}" Command="ScrollBar.PageUpCommand"/>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource DarkScrollBarThumb}"/>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource DarkScrollBarPageButton}" Command="ScrollBar.PageDownCommand"/>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+                <RepeatButton Grid.Row="2" Style="{StaticResource DarkScrollBarLineButton}" Command="ScrollBar.LineDownCommand"/>
+            </Grid>
+        </ControlTemplate>
+
+        <!-- Dark Horizontal ScrollBar Template -->
+        <ControlTemplate x:Key="DarkHorizontalScrollBar" TargetType="ScrollBar">
+            <Grid Background="#2D2D30">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <RepeatButton Grid.Column="0" Style="{StaticResource DarkScrollBarLineButton}" Command="ScrollBar.LineLeftCommand"/>
+                <Track x:Name="PART_Track" Grid.Column="1">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource DarkScrollBarPageButton}" Command="ScrollBar.PageLeftCommand"/>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource DarkScrollBarThumb}"/>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource DarkScrollBarPageButton}" Command="ScrollBar.PageRightCommand"/>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+                <RepeatButton Grid.Column="2" Style="{StaticResource DarkScrollBarLineButton}" Command="ScrollBar.LineRightCommand"/>
+            </Grid>
+        </ControlTemplate>
+
+        <!-- Dark ScrollBar Style -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="MinWidth" Value="12"/>
+            <Setter Property="Template" Value="{StaticResource DarkVerticalScrollBar}"/>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="Height" Value="12"/>
+                    <Setter Property="MinHeight" Value="12"/>
+                    <Setter Property="Template" Value="{StaticResource DarkHorizontalScrollBar}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
     </Window.Resources>
     
@@ -116,96 +278,99 @@
         
         <!-- Settings Panel -->
         <Border Grid.Column="0" Background="{DynamicResource ThemeMenuBackgroundBrush}" Padding="16">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                    <TextBlock Text="Print Settings" FontSize="18" FontWeight="Bold" 
-                               Foreground="{DynamicResource ThemeForegroundBrush}" Margin="0,0,0,16"/>
-                    
-                    <!-- Printer Selection -->
-                    <GroupBox Header="Printer">
-                        <StackPanel Margin="8">
-                            <ComboBox x:Name="PrinterCombo" SelectionChanged="PrinterCombo_SelectionChanged"/>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Page Size -->
-                    <GroupBox Header="Page Size">
-                        <StackPanel Margin="8">
-                            <ComboBox x:Name="PageSizeCombo" SelectionChanged="PageSizeCombo_SelectionChanged">
-                                <ComboBoxItem Content="Letter (8.5 x 11 in)" IsSelected="True"/>
-                                <ComboBoxItem Content="Legal (8.5 x 14 in)"/>
-                                <ComboBoxItem Content="A4 (210 x 297 mm)"/>
-                                <ComboBoxItem Content="A3 (297 x 420 mm)"/>
-                                <ComboBoxItem Content="Tabloid (11 x 17 in)"/>
-                            </ComboBox>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Orientation -->
-                    <GroupBox Header="Orientation">
-                        <StackPanel Margin="8">
-                            <RadioButton x:Name="PortraitRadio" Content="Portrait" IsChecked="True" 
-                                         Checked="Orientation_Changed"/>
-                            <RadioButton x:Name="LandscapeRadio" Content="Landscape" 
-                                         Checked="Orientation_Changed"/>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Scaling -->
-                    <GroupBox Header="Scaling">
-                        <StackPanel Margin="8">
-                            <RadioButton x:Name="FitToPageRadio" Content="Fit to single page" IsChecked="True"
-                                         Checked="Scaling_Changed"/>
-                            <RadioButton x:Name="FitToWidthRadio" Content="Fit to page width (may span multiple pages)"
-                                         Checked="Scaling_Changed"/>
-                            <RadioButton x:Name="ActualSizeRadio" Content="Actual size (100%)"
-                                         Checked="Scaling_Changed"/>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Margins -->
-                    <GroupBox Header="Margins">
-                        <StackPanel Margin="8">
-                            <ComboBox x:Name="MarginsCombo" SelectionChanged="MarginsCombo_SelectionChanged">
-                                <ComboBoxItem Content="Normal (1 inch)" IsSelected="True"/>
-                                <ComboBoxItem Content="Narrow (0.5 inch)"/>
-                                <ComboBoxItem Content="Wide (1.5 inch)"/>
-                                <ComboBoxItem Content="None"/>
-                            </ComboBox>
-                            <TextBlock x:Name="MarginWarningText" Text="" TextWrapping="Wrap"
-                                       Foreground="#FFB74D" FontSize="11" Margin="0,4,0,0"
-                                       Visibility="Collapsed"/>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Options -->
-                    <GroupBox Header="Options">
-                        <StackPanel Margin="8">
-                            <CheckBox x:Name="PrintBackgroundCheck" Content="Print background colors" IsChecked="True"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <CheckBox x:Name="CenterOnPageCheck" Content="Center on page" IsChecked="True"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        </StackPanel>
-                    </GroupBox>
-                    
-                    <!-- Page Info -->
-                    <Border Background="{DynamicResource ThemeToolbarBackgroundBrush}" 
-                            CornerRadius="4" Padding="12" Margin="0,8,0,0">
-                        <StackPanel>
-                            <TextBlock x:Name="PageCountText" Text="Pages: 1" 
-                                       Foreground="{DynamicResource ThemeForegroundBrush}"/>
-                            <TextBlock x:Name="ScaleText" Text="Scale: 100%" 
-                                       Foreground="{DynamicResource ThemeForegroundBrush}" Margin="0,4,0,0"/>
-                        </StackPanel>
-                    </Border>
-                    
-                    <!-- Buttons -->
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
-                        <Button x:Name="PrintButton" Content="Print" Click="Print_Click" IsDefault="True"/>
-                        <Button Content="Cancel" Click="Cancel_Click" IsCancel="True"/>
-                    </StackPanel>
+            <DockPanel LastChildFill="True">
+                <!-- Buttons pinned to bottom -->
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,4">
+                    <Button x:Name="PrintButton" Content="Print" Click="Print_Click" IsDefault="True"/>
+                    <Button Content="Cancel" Click="Cancel_Click" IsCancel="True"/>
                 </StackPanel>
-            </ScrollViewer>
+                
+                <!-- Page Info pinned above buttons -->
+                <Border DockPanel.Dock="Bottom" Background="{DynamicResource ThemeToolbarBackgroundBrush}" 
+                        CornerRadius="4" Padding="12" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock x:Name="PageCountText" Text="Pages: 1" 
+                                   Foreground="{DynamicResource ThemeForegroundBrush}"/>
+                        <TextBlock x:Name="ScaleText" Text="Scale: 100%" 
+                                   Foreground="{DynamicResource ThemeForegroundBrush}" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Border>
+                
+                <!-- Scrollable settings area fills remaining space -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
+                    <StackPanel Margin="0,0,4,0">
+                        <TextBlock Text="Print Settings" FontSize="18" FontWeight="Bold" 
+                                   Foreground="{DynamicResource ThemeForegroundBrush}" Margin="0,0,0,16"/>
+                        
+                        <!-- Printer Selection -->
+                        <GroupBox Header="Printer">
+                            <StackPanel Margin="8">
+                                <ComboBox x:Name="PrinterCombo" SelectionChanged="PrinterCombo_SelectionChanged"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <!-- Page Size -->
+                        <GroupBox Header="Page Size">
+                            <StackPanel Margin="8">
+                                <ComboBox x:Name="PageSizeCombo" SelectionChanged="PageSizeCombo_SelectionChanged">
+                                    <ComboBoxItem Content="Letter (8.5 x 11 in)" IsSelected="True"/>
+                                    <ComboBoxItem Content="Legal (8.5 x 14 in)"/>
+                                    <ComboBoxItem Content="A4 (210 x 297 mm)"/>
+                                    <ComboBoxItem Content="A3 (297 x 420 mm)"/>
+                                    <ComboBoxItem Content="Tabloid (11 x 17 in)"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <!-- Orientation -->
+                        <GroupBox Header="Orientation">
+                            <StackPanel Margin="8">
+                                <RadioButton x:Name="PortraitRadio" Content="Portrait" IsChecked="True" 
+                                             Checked="Orientation_Changed"/>
+                                <RadioButton x:Name="LandscapeRadio" Content="Landscape" 
+                                             Checked="Orientation_Changed"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <!-- Scaling -->
+                        <GroupBox Header="Scaling">
+                            <StackPanel Margin="8">
+                                <RadioButton x:Name="FitToPageRadio" Content="Fit to single page" IsChecked="True"
+                                             Checked="Scaling_Changed"/>
+                                <RadioButton x:Name="FitToWidthRadio" Content="Fit to page width (may span multiple pages)"
+                                             Checked="Scaling_Changed"/>
+                                <RadioButton x:Name="ActualSizeRadio" Content="Actual size (100%)"
+                                             Checked="Scaling_Changed"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <!-- Margins -->
+                        <GroupBox Header="Margins">
+                            <StackPanel Margin="8">
+                                <ComboBox x:Name="MarginsCombo" SelectionChanged="MarginsCombo_SelectionChanged">
+                                    <ComboBoxItem Content="Normal (1 inch)" IsSelected="True"/>
+                                    <ComboBoxItem Content="Narrow (0.5 inch)"/>
+                                    <ComboBoxItem Content="Wide (1.5 inch)"/>
+                                    <ComboBoxItem Content="None"/>
+                                </ComboBox>
+                                <TextBlock x:Name="MarginWarningText" Text="" TextWrapping="Wrap"
+                                           Foreground="#FFB74D" FontSize="11" Margin="0,4,0,0"
+                                           Visibility="Collapsed"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <!-- Options -->
+                        <GroupBox Header="Options">
+                            <StackPanel Margin="8">
+                                <CheckBox x:Name="PrintBackgroundCheck" Content="Print background colors" IsChecked="True"
+                                          Checked="Options_Changed" Unchecked="Options_Changed"/>
+                                <CheckBox x:Name="CenterOnPageCheck" Content="Center on page" IsChecked="True"
+                                          Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
         </Border>
         
         <!-- Preview Panel -->
@@ -222,10 +387,11 @@
                 
                 <!-- Preview Area -->
                 <Border Grid.Row="1" Background="#404040" CornerRadius="4">
-                    <ScrollViewer x:Name="PreviewScrollViewer" 
-                                  HorizontalScrollBarVisibility="Auto" 
-                                  VerticalScrollBarVisibility="Auto"
-                                  Padding="16">
+                        <ScrollViewer x:Name="PreviewScrollViewer" 
+                                      HorizontalScrollBarVisibility="Auto" 
+                                      VerticalScrollBarVisibility="Auto"
+                                      ScrollChanged="PreviewScrollViewer_ScrollChanged"
+                                      Padding="16">
                         <StackPanel x:Name="PreviewPagesPanel" HorizontalAlignment="Center">
                             <!-- Pages will be added here dynamically -->
                         </StackPanel>
