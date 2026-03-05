@@ -633,6 +633,10 @@ Console.WriteLine(""Hello, World!"");
             
             // Initialize SVG icons for toolbar buttons and menu items
             InitializeIcons();
+            // Force-refresh comment icon color after InitializeIcons resets all icons to default.
+            // This is critical for session restore: the constructor already ran SwitchToDocument()
+            // which set _lastCaretWasInComment, but InitializeIcons() just overwrote the green tint.
+            UpdateToggleCommentIconColor(force: true);
             
             // Load recent files
             LoadRecentFiles();
@@ -805,7 +809,7 @@ Console.WriteLine(""Hello, World!"");
     /// Checks if the current caret line is inside a comment and tints the toggle-comment
     /// toolbar button and menu item icon green when it is.
     /// </summary>
-    private void UpdateToggleCommentIconColor()
+    private void UpdateToggleCommentIconColor(bool force = false)
     {
         try
         {
@@ -826,7 +830,7 @@ Console.WriteLine(""Hello, World!"");
                 isComment = lineText.StartsWith("<!--");
             }
 
-            if (isComment == _lastCaretWasInComment) return;
+            if (!force && isComment == _lastCaretWasInComment) return;
             _lastCaretWasInComment = isComment;
 
             if (isComment)
@@ -3277,6 +3281,10 @@ Console.WriteLine(""Hello, World!"");
             // Markdown uses block comments (<!-- -->)
             ToggleMarkdownComment(doc, selection);
         }
+        
+        // Force-refresh the comment icon color since the text changed but
+        // the caret position may not have moved (so PositionChanged won't fire)
+        UpdateToggleCommentIconColor(force: true);
     }
 
     private void ToggleMermaidComment(ICSharpCode.AvalonEdit.Document.TextDocument doc, ICSharpCode.AvalonEdit.Editing.Selection selection)
@@ -5720,6 +5728,8 @@ Console.WriteLine(""Hello, World!"");
         UpdateTabStyles(); // Update tab colors for new theme
         SvgIconHelper.ClearCache();
         InitializeIcons();
+        // Force-refresh comment icon color since InitializeIcons reset all icons to default
+        UpdateToggleCommentIconColor(force: true);
         RenderPreview(); // Re-render preview with new theme
     }
 
@@ -5749,6 +5759,8 @@ Console.WriteLine(""Hello, World!"");
                 UpdateTabStyles();
                 SvgIconHelper.ClearCache();
                 InitializeIcons();
+                // Force-refresh comment icon color since InitializeIcons reset all icons to default
+                UpdateToggleCommentIconColor(force: true);
                 RenderPreview();
             }
 
@@ -5870,7 +5882,8 @@ Console.WriteLine(""Hello, World!"");
         var keywordColor = isDark ? "#569CD6" : "#0000FF";
         var diagramTypeColor = isDark ? "#C586C0" : "#AF00DB";
         
-        var xshd = "<?xml version=\"1.0\"?>" +
+        // Register Mermaid syntax highlighting
+        var mermaidXshd = "<?xml version=\"1.0\"?>" +
             "<SyntaxDefinition name=\"Mermaid\" xmlns=\"http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008\">" +
             "<Color name=\"Comment\" foreground=\"" + commentColor + "\" />" +
             "<Color name=\"Keyword\" foreground=\"" + keywordColor + "\" fontWeight=\"bold\" />" +
@@ -5901,14 +5914,46 @@ Console.WriteLine(""Hello, World!"");
 
         try
         {
-            using var reader = new XmlTextReader(new StringReader(xshd));
-            var definition = HighlightingLoader.Load(reader, HighlightingManager.Instance);
-            HighlightingManager.Instance.RegisterHighlighting("Mermaid", new[] { ".mmd", ".mermaid" }, definition);
-            CodeEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("Mermaid");
+            using var mermaidReader = new XmlTextReader(new StringReader(mermaidXshd));
+            var mermaidDef = HighlightingLoader.Load(mermaidReader, HighlightingManager.Instance);
+            HighlightingManager.Instance.RegisterHighlighting("Mermaid", new[] { ".mmd", ".mermaid" }, mermaidDef);
         }
         catch
         {
             // If syntax highlighting fails, continue without it
+        }
+
+        // Register Markdown syntax highlighting (with theme-aware comment color)
+        var markdownXshd = "<?xml version=\"1.0\"?>" +
+            "<SyntaxDefinition name=\"Markdown\" xmlns=\"http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008\">" +
+            "<Color name=\"Comment\" foreground=\"" + commentColor + "\" />" +
+            "<RuleSet>" +
+            "<Span color=\"Comment\" multiline=\"true\">" +
+            "<Begin>&lt;!--</Begin>" +
+            "<End>--&gt;</End>" +
+            "</Span>" +
+            "</RuleSet>" +
+            "</SyntaxDefinition>";
+
+        try
+        {
+            using var markdownReader = new XmlTextReader(new StringReader(markdownXshd));
+            var markdownDef = HighlightingLoader.Load(markdownReader, HighlightingManager.Instance);
+            HighlightingManager.Instance.RegisterHighlighting("Markdown", new[] { ".md", ".markdown" }, markdownDef);
+        }
+        catch
+        {
+            // If syntax highlighting fails, continue without it
+        }
+
+        // Apply the correct highlighting based on the active document type
+        if (_currentRenderMode == RenderMode.Markdown)
+        {
+            CodeEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("Markdown");
+        }
+        else
+        {
+            CodeEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("Mermaid");
         }
     }
 
@@ -7326,6 +7371,10 @@ Console.WriteLine(""Hello, World!"");
         UpdateMarkdownFormattingVisibility();
         UpdateZoomControlsVisibility();
         UpdateUndoRedoState();
+        
+        // Force-refresh comment icon color for the new document's caret position
+        _lastCaretWasInComment = false;
+        UpdateToggleCommentIconColor(force: true);
         
         // Re-render preview for the new document
         // This will trigger NavigateToString which resets _hasNavigatedAway to false
